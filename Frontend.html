@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Decentralized Identity System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <script>
+        // ... Tailwind config (unchanged) ...
+        tailwind.config = {
+            theme: {
+                extend: {
+                    animation: {
+                        'pulse-slow': 'pulse 3s infinite',
+                        'float': 'float 3s ease-in-out infinite',
+                    },
+                    keyframes: {
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0px)' },
+                            '50%': { transform: 'translateY(-10px)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 min-h-screen text-white">
+
+<!-- ... HEADER / NAV / TABS / FORMS are unchanged ... -->
+
+<!-- Replace ONLY ZKProofSystem JS logic with API calls -->
+<script>
+    // ...other code...
+
+    // Generate ZK proof (calls backend)
+    document.getElementById('zkProofForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const proofType = document.getElementById('proofType').value;
+        const threshold = document.getElementById('threshold').value;
+        const secretValue = document.getElementById('secretValue').value;
+        if (!secretValue || (proofType === 'age' && !threshold)) {
+            alert('Please fill in all required fields');
+            return;
+        }
+        // Send to backend for proof generation
+        const resp = await fetch('/api/zk/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ proof_type: proofType, threshold, secret_value: secretValue })
+        });
+        const data = await resp.json();
+        if (data && data.proof) {
+            document.getElementById('proofData').value = JSON.stringify(data.proof, null, 2);
+            alert('ZK Proof generated successfully!');
+        } else {
+            alert('Failed to generate ZK proof');
+        }
+    });
+
+    // Verify ZK proof (calls backend)
+    document.getElementById('verifyZkProofForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const proofData = document.getElementById('proofData').value;
+        if (!proofData) {
+            alert('Please provide proof data');
+            return;
+        }
+        // Send to backend for verification
+        const resp = await fetch('/api/zk/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ proof: proofData })
+        });
+        const data = await resp.json();
+        const resultDiv = document.getElementById('verificationResult');
+        const iconDiv = document.getElementById('verificationIcon');
+        const textSpan = document.getElementById('verificationText');
+        if (data.valid) {
+            resultDiv.className = 'mt-6 p-4 rounded-lg bg-green-500/20 border border-green-500/30';
+            iconDiv.innerHTML = '<svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>';
+            textSpan.textContent = 'Proof verified successfully!';
+            textSpan.className = 'font-medium text-green-400';
+        } else {
+            resultDiv.className = 'mt-6 p-4 rounded-lg bg-red-500/20 border border-red-500/30';
+            iconDiv.innerHTML = '<svg class="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>';
+            textSpan.textContent = 'Proof verification failed!';
+            textSpan.className = 'font-medium text-red-400';
+        }
+        resultDiv.classList.remove('hidden');
+    });
+    </div>
+               </div>         
+                      <button type="submit" class="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 py-3 rounded-lg font-medium transition-all transform hover:scale-105">
+                            Register Identity
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Identity Status -->
+                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30">
+                    <h2 class="text-2xl font-bold mb-6 text-center">Identity Status</h2>
+                    <div id="identityStatus" class="space-y-4">
+                        <div class="text-center py-8">
+                            <div class="w-16 h-16 bg-purple-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <svg class="w-8 h-8 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                                </svg>
+                            </div>
+                            <p class="text-gray-300">No identity registered</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+    </div>
+
+        <!-- Credentials Tab -->
+        <div id="credentials" class="tab-content hidden">
+            <div class="grid md:grid-cols-2 gap-8">
+                <!-- Issue Credential -->
+                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30">
+                    <h2 class="text-2xl font-bold mb-6">Issue Credential</h2>
+                    <form id="issueCredentialForm" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Identity ID</label>
+                            <input type="number" id="credentialIdentityId" class="w-full p-3 bg-white/10 border border-purple-500/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Credential Type</label>
+                            <select id="credentialType" class="w-full p-3 bg-white/10 border border-purple-500/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <option value="education">Education</option>
+                                <option value="employment">Employment</option>
+                                <option value="medical">Medical</option>
+                                <option value="government">Government ID</option>
+                                <option value="professional">Professional License</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Credential Data</label>
+                            <textarea id="credentialData" rows="4" class="w-full p-3 bg-white/10 border border-purple-500/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" placeholder="Enter credential details..."></textarea>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Expiration Date</label>
+                            <input type="date" id="expirationDate" class="w-full p-3 bg-white/10 border border-purple-500/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        </div>
+                        <button type="submit" class="w-full bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 py-3 rounded-lg font-medium transition-all">
+                            Issue Credential
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Credential List -->
+                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30">
+                    <h2 class="text-2xl font-bold mb-6">My Credentials</h2>
+                    <div id="credentialsList" class="space-y-4">
+                        <div class="text-center py-8">
+                            <div class="w-16 h-16 bg-blue-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <svg class="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                </svg>
+                            </div>
+                            <p class="text-gray-300">No credentials found</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Reputation Tab -->
+        <div id="reputation" class="tab-content hidden">
+            <div class="grid md:grid-cols-3 gap-6">
+                <!-- Reputation Score -->
+                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30">
+                    <h3 class="text-xl font-bold mb-4">Reputation Score</h3>
+                    <div class="text-center">
+                        <div class="relative w-32 h-32 mx-auto mb-4">
+                            <svg class="w-32 h-32 transform -rotate-90" viewBox="0 0 100 100">
+                                <circle cx="50" cy="50" r="40" stroke="currentColor" stroke-width="8" fill="none" class="text-gray-600"></circle>
+                                <circle id="reputationCircle" cx="50" cy="50" r="40" stroke="currentColor" stroke-width="8" fill="none" class="text-purple-400" stroke-linecap="round" stroke-dasharray="251.2" stroke-dashoffset="125.6"></circle>
+                            </svg>
+                            <div class="absolute inset-0 flex items-center justify-center">
+                                <span id="reputationScore" class="text-2xl font-bold">0</span>
+                            </div>
+                        </div>
+                        <p class="text-gray-300">Overall Score</p>
+                    </div>
+                </div>
+
+                <!-- Verification Stats -->
+                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30">
+                    <h3 class="text-xl font-bold mb-4">Verification Stats</h3>
+                    <div class="space-y-3">
+                        <div class="flex justify-between">
+                            <span class="text-gray-300">Total Verifications:</span>
+                            <span id="totalVerifications" class="font-semibold">0</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-300">Successful:</span>
+                            <span id="successfulVerifications" class="font-semibold text-green-400">0</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-300">Failed:</span>
+                            <span id="failedVerifications" class="font-semibold text-red-400">0</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-300">Success Rate:</span>
+                            <span id="successRate" class="font-semibold">0%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Category Scores -->
+                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30">
+                    <h3 class="text-xl font-bold mb-4">Category Scores</h3>
+                    <div id="categoryScores" class="space-y-3">
+                        <div class="text-center py-8">
+                            <p class="text-gray-300">No category data available</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ZK Proof Tab -->
+        <div id="zkproof" class="tab-content hidden">
+            <div class="grid md:grid-cols-2 gap-8">
+                <!-- Generate ZK Proof -->
+                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30">
+                    <h2 class="text-2xl font-bold mb-6">Generate ZK Proof</h2>
+                    <form id="zkProofForm" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Proof Type</label>
+                            <select id="proofType" class="w-full p-3 bg-white/10 border border-purple-500/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <option value="age">Age Verification</option>
+                                <option value="citizenship">Citizenship Status</option>
+                                <option value="education">Education Level</option>
+                                <option value="employment">Employment Status</option>
+                                <option value="medical">Medical Status</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Threshold Value</label>
+                            <input type="number" id="threshold" class="w-full p-3 bg-white/10 border border-purple-500/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" placeholder="e.g., 18 for age">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Secret Value</label>
+                            <input type="password" id="secretValue" class="w-full p-3 bg-white/10 border border-purple-500/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" placeholder="Your actual value">
+                        </div>
+                        <button type="submit" class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 py-3 rounded-lg font-medium transition-all">
+                            Generate ZK Proof
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Verify ZK Proof -->
+                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30">
+                    <h2 class="text-2xl font-bold mb-6">Verify ZK Proof</h2>
+                    <form id="verifyZkProofForm" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Proof Data</label>
+                            <textarea id="proofData" rows="6" class="w-full p-3 bg-white/10 border border-purple-500/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" placeholder="Paste ZK proof here..."></textarea>
+                        </div>
+                        <button type="submit" class="w-full bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700 py-3 rounded-lg font-medium transition-all">
+                            Verify Proof
+                        </button>
+                    </form>
+                    
+                    <div id="verificationResult" class="mt-6 p-4 rounded-lg hidden">
+                        <div class="flex items-center space-x-2">
+                            <div id="verificationIcon" class="w-6 h-6"></div>
+                            <span id="verificationText" class="font-medium"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ZK Proof History -->
+            <div class="mt-8 bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30">
+                <h2 class="text-2xl font-bold mb-6">ZK Proof History</h2>
+                <div id="zkProofHistory" class="space-y-4">
+                    <div class="text-center py-8">
+                        <div class="w-16 h-16 bg-indigo-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <svg class="w-8 h-8 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                            </svg>
+                        </div>
+                        <p class="text-gray-300">No ZK proofs generated yet</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <style>
+        .tab-btn {
+            @apply px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors text-sm font-medium;
+        }
+        .tab-btn.active {
+            @apply bg-purple-600 text-white;
+        }
+        .tab-content {
+            @apply opacity-100 transition-opacity duration-300;
+        }
+        .tab-content.hidden {
+            @apply opacity-0 pointer-events-none;
+        }
+    </style>
+
+    <script>
+        // Web3 and wallet connection
+        let web3;
+        let userAccount;
+        let identityContract;
+        let credentialContract;
+        let reputationContract;
+
+        // Contract addresses (replace with actual deployed addresses)
+        const IDENTITY_CONTRACT_ADDRESS = '0x...';
+        const CREDENTIAL_CONTRACT_ADDRESS = '0x...';
+        const REPUTATION_CONTRACT_ADDRESS = '0x...';
+
+        // ZK Proof implementation
+        class ZKProofSystem {
+            constructor() {
+                this.proofs = JSON.parse(localStorage.getItem('zkProofs') || '[]');
+            }
+
+            // Simple ZK proof for age verification (proof that age >= threshold without revealing actual age)
+            generateAgeProof(actualAge, threshold) {
+                const salt = this.generateSalt();
+                const commitment = this.hash(actualAge + salt);
+                const proof = this.generateRangeProof(actualAge, threshold, salt);
+                
+                return {
+                    type: 'age',
+                    commitment,
+                    proof,
+                    threshold,
+                    timestamp: Date.now()
+                };
+            }
+
+            // Generate proof for boolean attributes (citizenship, employment, etc.)
+            generateBooleanProof(value, proofType) {
+                const salt = this.generateSalt();
+                const commitment = this.hash(value + salt);
+                const proof = this.generateBooleanCommitmentProof(value, salt);
+                
+                return {
+                    type: proofType,
+                    commitment,
+                    proof,
+                    value: value, // encrypted
+                    timestamp: Date.now()
+                };
+            }
+
+            // Generate range proof (simplified version)
+            generateRangeProof(value, threshold, salt) {
+                const isValid = value >= threshold;
+                const proofData = {
+                    challenge: this.hash(value + threshold + salt),
+                    response: this.hash(isValid + salt),
+                    bulletproof: this.generateBulletProof(value, threshold, salt)
+                };
+                
+                return {
+                    isValid,
+                    proofData,
+                    salt: this.hash(salt) // hashed salt for verification
+                };
+            }
+
+            // Generate boolean commitment proof
+            generateBooleanCommitmentProof(value, salt) {
+                const commitment = this.hash(value + salt);
+                const challenge = this.generateRandomChallenge();
+                const response = this.hash(commitment + challenge);
+                
+                return {
+                    commitment,
+                    challenge,
+                    response,
+                    salt: this.hash(salt)
+                };
+            }
+
+            // Generate bulletproof (simplified)
+            generateBulletProof(value, threshold, salt) {
+                const range = value - threshold;
+                const commitment = this.hash(range + salt);
+                const proof = this.hash(commitment + value + threshold);
+                
+                return {
+                    commitment,
+                    proof,
+                    range: range >= 0 ? 'valid' : 'invalid'
+                };
+            }
+
+            // Verify ZK proof
+            verifyProof(proofData) {
+                try {
+                    const proof = JSON.parse(proofData);
+                    
+                    switch(proof.type) {
+                        case 'age':
+                            return this.verifyAgeProof(proof);
+                        case 'citizenship':
+                        case 'employment':
+                        case 'education':
+                        case 'medical':
+                            return this.verifyBooleanProof(proof);
+                        default:
+                            return false;
+                    }
+                } catch (e) {
+                    return false;
+                }
+            }
+
+            verifyAgeProof(proof) {
+                // Verify the range proof without revealing the actual age
+                const { proofData, threshold } = proof.proof;
+                
+                // In a real implementation, this would use cryptographic verification
+                // For this demo, we simulate the verification process
+                const isValidProof = proofData.challenge && proofData.response && proofData.bulletproof;
+                const isValidRange = proofData.bulletproof.range === 'valid';
+                
+                return isValidProof && isValidRange;
+            }
+
+            verifyBooleanProof(proof) {
+                // Verify boolean commitment proof
+                const { commitment, challenge, response } = proof.proof;
+                
+                // Simulate verification
+                const expectedResponse = this.hash(commitment + challenge);
+                return response === expectedResponse;
+            }
+
+            // Utility functions
+            generateSalt() {
+                return Math.random().toString(36).substring(2, 15);
+            }
+
+            generateRandomChallenge() {
+                return Math.random().toString(36).substring(2, 15);
+            }
+
+            hash(data) {
+                return CryptoJS.SHA256(data.toString()).toString();
+            }
+
+            saveProof(proof) {
+                this.proofs.push(proof);
+                localStorage.setItem('zkProofs', JSON.stringify(this.proofs));
+            }
+
+            getProofs() {
+                return this.proofs;
+            }
+        }
+
+        const zkProofSystem = new ZKProofSystem();
+
+        // Tab switching
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const targetTab = e.target.dataset.tab;
+                
+                // Update active tab
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
+                
+                // Show/hide content
+                document.querySelectorAll('.tab-content').forEach(content => {
+                    content.classList.add('hidden');
+                });
+                document.getElementById(targetTab).classList.remove('hidden');
+            });
+        });
+
+        // Connect wallet
+        document.getElementById('connectWallet').addEventListener('click', async () => {
+            if (typeof window.ethereum !== 'undefined') {
+                try {
+                    const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+                    userAccount = accounts[0];
+                    document.getElementById('walletStatus').textContent = `Connected: ${userAccount.slice(0, 6)}...${userAccount.slice(-4)}`;
+                    document.getElementById('connectWallet').textContent = 'Connected';
+                    document.getElementById('connectWallet').classList.add('bg-green-600');
+                } catch (error) {
+                    console.error('Failed to connect wallet:', error);
+                }
+            } else {
+                alert('Please install MetaMask or another Web3 wallet!');
+            }
+        });
+
+        // Register identity
+        document.getElementById('registerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const did = document.getElementById('did').value;
+            const facialData = document.getElementById('facialData').files[0];
+            const fingerprintData = document.getElementById('fingerprintData').files[0];
+            const voiceData = document.getElementById('voiceData').files[0];
+            const irisData = document.getElementById('irisData').files[0];
+            
+            if (!did || !facialData || !fingerprintData) {
+                alert('Please fill in all required fields');
+                return;
+            }
+            
+            // Generate biometric hashes
+            const biometricData = {
+                facialHash: await hashFile(facialData),
+                fingerprintHash: await hashFile(fingerprintData),
+                voiceHash: voiceData ? await hashFile(voiceData) : '0x0',
+                irisHash: irisData ? await hashFile(irisData) : '0x0',
+                behavioralHash: '0x0',
+                dnaHash: '0x0',
+                timestamp: Math.floor(Date.now() / 1000),
+                isActive: true
+            };
+            
+            // Simulate identity registration
+            const identityId = Math.floor(Math.random() * 10000);
+            const identity = {
+                id: identityId,
+                did,
+                owner: userAccount,
+                biometrics: biometricData,
+                reputationScore: 100,
+                createdAt: Date.now(),
+                lastVerified: Date.now(),
+                isActive: true
+            };
+            
+            // Store locally for demo
+            localStorage.setItem('userIdentity', JSON.stringify(identity));
+            
+            // Update UI
+            updateIdentityStatus(identity);
+            
+            alert('Identity registered successfully!');
+        });
+
+        // Issue credential
+        document.getElementById('issueCredentialForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const identityId = document.getElementById('credentialIdentityId').value;
+            const credentialType = document.getElementById('credentialType').value;
+            const credentialData = document.getElementById('credentialData').value;
+            const expirationDate = document.getElementById('expirationDate').value;
+            
+            if (!identityId || !credentialData) {
+                alert('Please fill in all required fields');
+                return;
+            }
+            
+            const credential = {
+                id: Math.random().toString(36).substring(2, 15),
+                identityId,
+                type: credentialType,
+                data: credentialData,
+                issuer: userAccount,
+                issuedAt: Date.now(),
+                expiresAt: new Date(expirationDate).getTime(),
+                isActive: true
+            };
+            
+            // Store locally for demo
+            const credentials = JSON.parse(localStorage.getItem('credentials') || '[]');
+            credentials.push(credential);
+            localStorage.setItem('credentials', JSON.stringify(credentials));
+            
+            updateCredentialsList();
+            
+            alert('Credential issued successfully!');
+        });
+
+        // Generate ZK proof
+        document.getElementById('zkProofForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const proofType = document.getElementById('proofType').value;
+            const threshold = parseInt(document.getElementById('threshold').value);
+            const secretValue = document.getElementById('secretValue').value;
+            
+            if (!secretValue || (proofType === 'age' && !threshold)) {
+                alert('Please fill in all required fields');
+                return;
+            }
+            
+            let proof;
+            
+            if (proofType === 'age') {
+                const age = parseInt(secretValue);
+                proof = zkProofSystem.generateAgeProof(age, threshold);
+            } else {
+                const booleanValue = secretValue.toLowerCase() === 'true' || secretValue === '1';
+                proof = zkProofSystem.generateBooleanProof(booleanValue, proofType);
+            }
+            
+            zkProofSystem.saveProof(proof);
+            updateZKProofHistory();
+            
+            // Display generated proof
+            const proofJson = JSON.stringify(proof, null, 2);
+            document.getElementById('proofData').value = proofJson;
+            
+            alert('ZK Proof generated successfully!');
+        });
+
+        // Verify ZK proof
+        document.getElementById('verifyZkProofForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const proofData = document.getElementById('proofData').value;
+            
+            if (!proofData) {
+                alert('Please provide proof data');
+                return;
+            }
+            
+            const isValid = zkProofSystem.verifyProof(proofData);
+            
+            const resultDiv = document.getElementById('verificationResult');
+            const iconDiv = document.getElementById('verificationIcon');
+            const textSpan = document.getElementById('verificationText');
+            
+            if (isValid) {
+                resultDiv.className = 'mt-6 p-4 rounded-lg bg-green-500/20 border border-green-500/30';
+                iconDiv.innerHTML = '<svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>';
+                textSpan.textContent = 'Proof verified successfully!';
+                textSpan.className = 'font-medium text-green-400';
+            } else {
+                resultDiv.className = 'mt-6 p-4 rounded-lg bg-red-500/20 border border-red-500/30';
+                iconDiv.innerHTML = '<svg class="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>';
+                textSpan.textContent = 'Proof verification failed!';
+                textSpan.className = 'font-medium text-red-400';
+            }
+            
+            resultDiv.classList.remove('hidden');
+        });
+
+        // Utility functions
+        async function hashFile(file) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const hash = CryptoJS.SHA256(e.target.result).toString();
+                    resolve('0x' + hash.substring(0, 64));
+                };
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        function updateIdentityStatus(identity) {
+            const statusDiv = document.getElementById('identityStatus');
+            statusDiv.innerHTML = `
+                <div class="space-y-4">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-12 h-12 bg-green-500/20 rounded-full flex items-center justify-center">
+                            <svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-green-400">Identity Registered</h3>
+                            <p class="text-sm text-gray-300">ID: ${identity.id}</p>
+                        </div>
+                    </div>
+                    <div class="space-y-2">
+                        <div class="flex justify-between">
+                            <span class="text-gray-300">DID:</span>
+                            <span class="font-medium">${identity.did}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-300">Reputation Score:</span>
+                            <span class="font-medium text-purple-400">${identity.reputationScore}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-300">Created:</span>
+                            <span class="font-medium">${new Date(identity.createdAt).toLocaleDateString()}</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-300">Last Verified:</span>
+                            <span class="font-medium">${new Date(identity.lastVerified).toLocaleDateString()}</span>
+                        </div>
+                    </div>
+                    <div class="mt-4">
+                        <h4 class="font-bold mb-2">Biometric Data</h4>
+                        <div class="grid grid-cols-2 gap-2 text-sm">
+                            <div class="flex items-center space-x-2">
+                                <div class="w-2 h-2 bg-green-400 rounded-full"></div>
+                                <span>Facial Recognition</span>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <div class="w-2 h-2 bg-green-400 rounded-full"></div>
+                                <span>Fingerprint</span>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <div class="w-2 h-2 ${identity.biometrics.voiceHash !== '0x0' ? 'bg-green-400' : 'bg-gray-400'} rounded-full"></div>
+                                <span>Voice Print</span>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <div class="w-2 h-2 ${identity.biometrics.irisHash !== '0x0' ? 'bg-green-400' : 'bg-gray-400'} rounded-full"></div>
+                                <span>Iris Scan</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function updateCredentialsList() {
+            const credentials = JSON.parse(localStorage.getItem('credentials') || '[]');
+            const listDiv = document.getElementById('credentialsList');
+            
+            if (credentials.length === 0) {
+                listDiv.innerHTML = `
+                    <div class="text-center py-8">
+                        <div class="w-16 h-16 bg-blue-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <svg class="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </div>
+                        <p class="text-gray-300">No credentials found</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            listDiv.innerHTML = credentials.map(cred => `
+                <div class="bg-white/5 p-4 rounded-lg border border-blue-500/20">
+                    <div class="flex justify-between items-start mb-2">
+                        <h4 class="font-bold text-blue-400">${cred.type.charAt(0).toUpperCase() + cred.type.slice(1)}</h4>
+                        <span class="text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded">Active</span>
+                    </div>
+                    <p class="text-sm text-gray-300 mb-2">${cred.data}</p>
+                    <div class="flex justify-between text-xs text-gray-400">
+                        <span>Issued: ${new Date(cred.issuedAt).toLocaleDateString()}</span>
+                        <span>Expires: ${new Date(cred.expiresAt).toLocaleDateString()}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function updateReputationDisplay(reputationData) {
+            const scoreElement = document.getElementById('reputationScore');
+            const circleElement = document.getElementById('reputationCircle');
+            
+            const score = reputationData.score || 0;
+            const circumference = 2 * Math.PI * 40;
+            const progress = (score / 1000) * circumference;
+            
+            scoreElement.textContent = score;
+            circleElement.style.strokeDashoffset = circumference - progress;
+            
+            document.getElementById('totalVerifications').textContent = reputationData.totalVerifications || 0;
+            document.getElementById('successfulVerifications').textContent = reputationData.successfulVerifications || 0;
+            document.getElementById('failedVerifications').textContent = reputationData.failedVerifications || 0;
+            
+            const successRate = reputationData.totalVerifications > 0 
+                ? Math.round((reputationData.successfulVerifications / reputationData.totalVerifications) * 100)
+                : 0;
+            document.getElementById('successRate').textContent = successRate + '%';
+        }
+
+        function updateZKProofHistory() {
+            const proofs = zkProofSystem.getProofs();
+            const historyDiv = document.getElementById('zkProofHistory');
+            
+            if (proofs.length === 0) {
+                historyDiv.innerHTML = `
+                    <div class="text-center py-8">
+                        <div class="w-16 h-16 bg-indigo-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <svg class="w-8 h-8 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                            </svg>
+                        </div>
+                        <p class="text-gray-300">No ZK proofs generated yet</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            historyDiv.innerHTML = proofs.map(proof => `
+                <div class="bg-white/5 p-4 rounded-lg border border-indigo-500/20">
+                    <div class="flex justify-between items-start mb-2">
+                        <h4 class="font-bold text-indigo-400">${proof.type.charAt(0).toUpperCase() + proof.type.slice(1)} Proof</h4>
+                        <span class="text-xs px-2 py-1 bg-indigo-500/20 text-indigo-400 rounded">Generated</span>
+                    </div>
+                    <div class="text-sm text-gray-300 mb-2">
+                        <div class="flex justify-between">
+                            <span>Commitment:</span>
+                            <span class="font-mono text-xs">${proof.commitment.substring(0, 16)}...</span>
+                        </div>
+                        ${proof.threshold ? `<div class="flex justify-between">
+                            <span>Threshold:</span>
+                            <span>${proof.threshold}</span>
+                        </div>` : ''}
+                    </div>
+                    <div class="flex justify-between text-xs text-gray-400">
+                        <span>Generated: ${new Date(proof.timestamp).toLocaleDateString()}</span>
+                        <button onclick="copyProof('${proof.commitment}')" class="text-indigo-400 hover:text-indigo-300">Copy Proof</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function copyProof(commitment) {
+            navigator.clipboard.writeText(commitment);
+            alert('Proof commitment copied to clipboard!');
+        }
+
+        // Initialize the application
+        async function init() {
+            // Load saved identity
+            const savedIdentity = localStorage.getItem('userIdentity');
+            if (savedIdentity) {
+                const identity = JSON.parse(savedIdentity);
+                updateIdentityStatus(identity);
+                
+                // Load reputation data
+                const reputationData = {
+                    score: identity.reputationScore,
+                    totalVerifications: Math.floor(Math.random() * 50) + 10,
+                    successfulVerifications: Math.floor(Math.random() * 40) + 8,
+                    failedVerifications: Math.floor(Math.random() * 5) + 1
+                };
+                updateReputationDisplay(reputationData);
+            }
+            
+            // Load credentials
+            updateCredentialsList();
+            
+            // Load ZK proof history
+            updateZKProofHistory();
+        }
+
+        // Start the application
+        init();
+    </script>
+</body>
+</html>
