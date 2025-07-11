@@ -1,456 +1,473 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.19;
 
-import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
-// Core Identity Registry Contract
-contract IdentityRegistry is AccessControl, ReentrancyGuard, Pausable {
-    using Counters for Counters.Counter;
+/**
+ * @title AIDS - Advanced Identity and Data Security Smart Contract
+ * @author Enhanced Security Team
+ * @notice This contract manages secure identity verification using biometrics and ZK proofs
+ * @dev Implements multiple security layers including biometric verification, ZK proofs, and access control
+ */
+contract AIDSIdentityVerification is Ownable, ReentrancyGuard, Pausable {
+    using ECDSA for bytes32;
+    using MessageHashUtils for bytes32;
     
-    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
-    bytes32 public constant VERIFIER_ROLE = keccak256("VERIFIER_ROLE");
-    bytes32 public constant ISSUER_ROLE = keccak256("ISSUER_ROLE");
+    // Events
+    event UserRegistered(address indexed user, bytes32 indexed identityHash, uint256 timestamp);
+    event BiometricVerified(address indexed user, bytes32 indexed sessionId, uint256 timestamp);
+    event ZKProofVerified(address indexed user, bytes32 indexed proofHash, uint256 timestamp);
+    event AccessGranted(address indexed user, bytes32 indexed resource, uint256 timestamp);
+    event AccessRevoked(address indexed user, bytes32 indexed resource, uint256 timestamp);
+    event SecurityBreach(address indexed user, string reason, uint256 timestamp);
+    event SystemUpgraded(address indexed oldContract, address indexed newContract, uint256 timestamp);
     
-    Counters.Counter private _identityIds;
-    
-    struct BiometricData {
-        bytes32 facialHash;
-        bytes32 fingerprintHash;
-        bytes32 voiceHash;
-        bytes32 irisHash;
-        bytes32 behavioralHash;
-        bytes32 dnaHash;
-        uint256 timestamp;
-        bool isActive;
+    // Structs
+    struct User {
+        bytes32 identityHash;           // Hash of user's identity
+        bytes32 biometricHash;          // Hash of biometric template
+        bytes32 zkProofCommitment;      // ZK proof commitment
+        uint256 registrationTime;       // When user was registered
+        uint256 lastVerification;       // Last verification timestamp
+        uint256 verificationCount;      // Number of successful verifications
+        bool isActive;                  // User account status
+        bool isVerified;               // Biometric verification status
+        mapping(bytes32 => bool) accessRights;  // Resource access rights
     }
     
-    struct Identity {
-        string did;
-        address owner;
-        BiometricData biometrics;
-        mapping(string => bytes32) credentials;
-        mapping(address => bool) authorizedVerifiers;
-        uint256 reputationScore;
+    struct VerificationSession {
+        address user;
+        bytes32 challenge;
         uint256 createdAt;
-        uint256 lastVerified;
-        bool isActive;
-        string[] credentialTypes;
+        uint256 expiresAt;
+        bool isCompleted;
+        bool isValid;
     }
     
-    mapping(address => uint256) public addressToIdentityId;
-    mapping(uint256 => Identity) public identities;
-    mapping(string => uint256) public didToIdentityId;
-    mapping(bytes32 => bool) public usedBiometricHashes;
+    struct ZKProof {
+        bytes32 commitment;
+        bytes32 challenge;
+        bytes32 response;
+        address prover;
+        uint256 timestamp;
+        bool isVerified;
+    }
     
-    event IdentityRegistered(uint256 indexed identityId, address indexed owner, string did);
-    event IdentityVerified(uint256 indexed identityId, address indexed verifier);
-    event BiometricUpdated(uint256 indexed identityId, string biometricType);
-    event CredentialAdded(uint256 indexed identityId, string credentialType);
-    event ReputationUpdated(uint256 indexed identityId, uint256 newScore);
+    struct AccessControl {
+        bytes32 resourceId;
+        address[] authorizedUsers;
+        uint256 minVerificationLevel;
+        uint256 maxAccessDuration;
+        bool requiresZKProof;
+        bool isActive;
+    }
+    
+    // State variables
+    mapping(address => User) public users;
+    mapping(bytes32 => VerificationSession) public verificationSessions;
+    mapping(bytes32 => ZKProof) public zkProofs;
+    mapping(bytes32 => AccessControl) public accessControls;
+    mapping(address => mapping(bytes32 => uint256)) public userAccessExpiry;
+    
+    // Security parameters
+    uint256 public constant SESSION_DURATION = 300; // 5 minutes
+    uint256 public constant MAX_VERIFICATION_ATTEMPTS = 3;
+    uint256 public constant PROOF_VALIDITY_PERIOD = 3600; // 1 hour
+    uint256 public constant MIN_VERIFICATION_INTERVAL = 60; // 1 minute
+    
+    // Counters and stats
+    uint256 public totalUsers;
+    uint256 public totalVerifications;
+    uint256 public totalZKProofs;
+    uint256 public securityBreaches;
+    
+    // Authorized verifiers
+    mapping(address => bool) public authorizedVerifiers;
+    
+    // Modifiers
+    modifier onlyAuthorizedVerifier() {
+        require(authorizedVerifiers[msg.sender] || msg.sender == owner(), "Not authorized verifier");
+        _;
+    }
+    
+    modifier onlyRegisteredUser() {
+        require(users[msg.sender].isActive, "User not registered");
+        _;
+    }
+    
+    modifier onlyVerifiedUser() {
+        require(users[msg.sender].isVerified, "User not verified");
+        _;
+    }
+    
+    modifier validSession(bytes32 sessionId) {
+        require(verificationSessions[sessionId].isValid, "Invalid session");
+        require(block.timestamp <= verificationSessions[sessionId].expiresAt, "Session expired");
+        _;
+    }
     
     constructor() {
-        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _grantRole(ADMIN_ROLE, msg.sender);
+        authorizedVerifiers[msg.sender] = true;
     }
     
-    function registerIdentity(
-        string memory _did,
-        BiometricData memory _biometrics
+    /**
+     * @notice Register a new user with biometric and ZK proof data
+     * @param identityHash Hash of user's identity information
+     * @param biometricHash Hash of biometric template
+     * @param zkCommitment ZK proof commitment
+     */
+    function registerUser(
+        bytes32 identityHash,
+        bytes32 biometricHash,
+        bytes32 zkCommitment
     ) external nonReentrant whenNotPaused {
-        require(addressToIdentityId[msg.sender] == 0, "Identity already exists");
-        require(didToIdentityId[_did] == 0, "DID already exists");
-        require(_validateBiometrics(_biometrics), "Invalid biometric data");
+        require(!users[msg.sender].isActive, "User already registered");
+        require(identityHash != bytes32(0), "Invalid identity hash");
+        require(biometricHash != bytes32(0), "Invalid biometric hash");
+        require(zkCommitment != bytes32(0), "Invalid ZK commitment");
         
-        _identityIds.increment();
-        uint256 identityId = _identityIds.current();
+        // Create user record
+        User storage newUser = users[msg.sender];
+        newUser.identityHash = identityHash;
+        newUser.biometricHash = biometricHash;
+        newUser.zkProofCommitment = zkCommitment;
+        newUser.registrationTime = block.timestamp;
+        newUser.isActive = true;
+        newUser.isVerified = false;
         
-        Identity storage identity = identities[identityId];
-        identity.did = _did;
-        identity.owner = msg.sender;
-        identity.biometrics = _biometrics;
-        identity.reputationScore = 100; // Starting reputation
-        identity.createdAt = block.timestamp;
-        identity.lastVerified = block.timestamp;
-        identity.isActive = true;
+        totalUsers++;
         
-        addressToIdentityId[msg.sender] = identityId;
-        didToIdentityId[_did] = identityId;
-        
-        _markBiometricsAsUsed(_biometrics);
-        
-        emit IdentityRegistered(identityId, msg.sender, _did);
+        emit UserRegistered(msg.sender, identityHash, block.timestamp);
     }
     
-    function verifyIdentity(
-        uint256 _identityId,
-        BiometricData memory _biometrics
-    ) external onlyRole(VERIFIER_ROLE) returns (bool) {
-        require(identities[_identityId].isActive, "Identity not active");
-        
-        Identity storage identity = identities[_identityId];
-        bool verified = _verifyBiometrics(identity.biometrics, _biometrics);
-        
-        if (verified) {
-            identity.lastVerified = block.timestamp;
-            identity.reputationScore = _calculateReputationIncrease(identity.reputationScore);
-            emit IdentityVerified(_identityId, msg.sender);
-        }
-        
-        return verified;
-    }
-    
-    function updateBiometrics(
-        uint256 _identityId,
-        BiometricData memory _newBiometrics,
-        string memory _biometricType
-    ) external {
-        require(identities[_identityId].owner == msg.sender, "Not authorized");
-        require(_validateBiometrics(_newBiometrics), "Invalid biometric data");
-        
-        Identity storage identity = identities[_identityId];
-        
-        // Remove old biometric hashes from used list
-        _removeBiometricsFromUsed(identity.biometrics);
-        
-        // Update biometrics
-        identity.biometrics = _newBiometrics;
-        _markBiometricsAsUsed(_newBiometrics);
-        
-        emit BiometricUpdated(_identityId, _biometricType);
-    }
-    
-    function addCredential(
-        uint256 _identityId,
-        string memory _credentialType,
-        bytes32 _credentialHash
-    ) external onlyRole(ISSUER_ROLE) {
-        require(identities[_identityId].isActive, "Identity not active");
-        
-        Identity storage identity = identities[_identityId];
-        identity.credentials[_credentialType] = _credentialHash;
-        identity.credentialTypes.push(_credentialType);
-        
-        emit CredentialAdded(_identityId, _credentialType);
-    }
-    
-    function getIdentityByAddress(address _owner) external view returns (
-        uint256 identityId,
-        string memory did,
-        uint256 reputationScore,
-        uint256 createdAt,
-        uint256 lastVerified,
-        bool isActive
-    ) {
-        uint256 id = addressToIdentityId[_owner];
-        require(id != 0, "Identity not found");
-        
-        Identity storage identity = identities[id];
-        return (
-            id,
-            identity.did,
-            identity.reputationScore,
-            identity.createdAt,
-            identity.lastVerified,
-            identity.isActive
+    /**
+     * @notice Initiate biometric verification session
+     * @param challenge Random challenge for verification
+     * @return sessionId Unique session identifier
+     */
+    function initiateVerification(bytes32 challenge) 
+        external 
+        onlyRegisteredUser 
+        nonReentrant 
+        whenNotPaused 
+        returns (bytes32 sessionId) 
+    {
+        require(challenge != bytes32(0), "Invalid challenge");
+        require(
+            block.timestamp >= users[msg.sender].lastVerification + MIN_VERIFICATION_INTERVAL,
+            "Verification too frequent"
         );
-    }
-    
-    function _validateBiometrics(BiometricData memory _biometrics) internal view returns (bool) {
-        return (
-            _biometrics.facialHash != bytes32(0) &&
-            _biometrics.fingerprintHash != bytes32(0) &&
-            !usedBiometricHashes[_biometrics.facialHash] &&
-            !usedBiometricHashes[_biometrics.fingerprintHash]
-        );
-    }
-    
-    function _verifyBiometrics(
-        BiometricData memory _stored,
-        BiometricData memory _provided
-    ) internal pure returns (bool) {
-        uint256 matches = 0;
-        uint256 totalChecks = 0;
         
-        if (_stored.facialHash != bytes32(0)) {
-            totalChecks++;
-            if (_stored.facialHash == _provided.facialHash) matches++;
-        }
+        // Generate unique session ID
+        sessionId = keccak256(abi.encodePacked(msg.sender, challenge, block.timestamp));
         
-        if (_stored.fingerprintHash != bytes32(0)) {
-            totalChecks++;
-            if (_stored.fingerprintHash == _provided.fingerprintHash) matches++;
-        }
-        
-        if (_stored.voiceHash != bytes32(0)) {
-            totalChecks++;
-            if (_stored.voiceHash == _provided.voiceHash) matches++;
-        }
-        
-        if (_stored.irisHash != bytes32(0)) {
-            totalChecks++;
-            if (_stored.irisHash == _provided.irisHash) matches++;
-        }
-        
-        if (_stored.behavioralHash != bytes32(0)) {
-            totalChecks++;
-            if (_stored.behavioralHash == _provided.behavioralHash) matches++;
-        }
-        
-        // Require at least 80% match rate
-        return (matches * 100) >= (totalChecks * 80);
-    }
-    
-    function _markBiometricsAsUsed(BiometricData memory _biometrics) internal {
-        if (_biometrics.facialHash != bytes32(0)) {
-            usedBiometricHashes[_biometrics.facialHash] = true;
-        }
-        if (_biometrics.fingerprintHash != bytes32(0)) {
-            usedBiometricHashes[_biometrics.fingerprintHash] = true;
-        }
-        if (_biometrics.voiceHash != bytes32(0)) {
-            usedBiometricHashes[_biometrics.voiceHash] = true;
-        }
-        if (_biometrics.irisHash != bytes32(0)) {
-            usedBiometricHashes[_biometrics.irisHash] = true;
-        }
-        if (_biometrics.behavioralHash != bytes32(0)) {
-            usedBiometricHashes[_biometrics.behavioralHash] = true;
-        }
-        if (_biometrics.dnaHash != bytes32(0)) {
-            usedBiometricHashes[_biometrics.dnaHash] = true;
-        }
-    }
-    
-    function _removeBiometricsFromUsed(BiometricData memory _biometrics) internal {
-        if (_biometrics.facialHash != bytes32(0)) {
-            usedBiometricHashes[_biometrics.facialHash] = false;
-        }
-        if (_biometrics.fingerprintHash != bytes32(0)) {
-            usedBiometricHashes[_biometrics.fingerprintHash] = false;
-        }
-        if (_biometrics.voiceHash != bytes32(0)) {
-            usedBiometricHashes[_biometrics.voiceHash] = false;
-        }
-        if (_biometrics.irisHash != bytes32(0)) {
-            usedBiometricHashes[_biometrics.irisHash] = false;
-        }
-        if (_biometrics.behavioralHash != bytes32(0)) {
-            usedBiometricHashes[_biometrics.behavioralHash] = false;
-        }
-        if (_biometrics.dnaHash != bytes32(0)) {
-            usedBiometricHashes[_biometrics.dnaHash] = false;
-        }
-    }
-    
-    function _calculateReputationIncrease(uint256 _currentScore) internal pure returns (uint256) {
-        if (_currentScore < 900) {
-            return _currentScore + 10;
-        } else if (_currentScore < 950) {
-            return _currentScore + 5;
-        } else {
-            return _currentScore + 1;
-        }
-    }
-}
-
-// Credential Verification Contract
-contract CredentialVerification is AccessControl, ReentrancyGuard {
-    bytes32 public constant ISSUER_ROLE = keccak256("ISSUER_ROLE");
-    bytes32 public constant VERIFIER_ROLE = keccak256("VERIFIER_ROLE");
-    
-    struct Credential {
-        uint256 identityId;
-        string credentialType;
-        bytes32 credentialHash;
-        address issuer;
-        uint256 issuedAt;
-        uint256 expiresAt;
-        bool isActive;
-        string metadataUri;
-    }
-    
-    mapping(bytes32 => Credential) public credentials;
-    mapping(uint256 => bytes32[]) public identityCredentials;
-    mapping(string => mapping(uint256 => bytes32)) public typeToIdentityCredential;
-    
-    event CredentialIssued(bytes32 indexed credentialId, uint256 indexed identityId, string credentialType);
-    event CredentialRevoked(bytes32 indexed credentialId, uint256 indexed identityId);
-    event CredentialVerified(bytes32 indexed credentialId, address indexed verifier);
-    
-    function issueCredential(
-        uint256 _identityId,
-        string memory _credentialType,
-        bytes32 _credentialHash,
-        uint256 _expiresAt,
-        string memory _metadataUri
-    ) external onlyRole(ISSUER_ROLE) returns (bytes32) {
-        bytes32 credentialId = keccak256(abi.encodePacked(
-            _identityId,
-            _credentialType,
-            _credentialHash,
-            msg.sender,
-            block.timestamp
-        ));
-        
-        require(credentials[credentialId].issuer == address(0), "Credential already exists");
-        
-        credentials[credentialId] = Credential({
-            identityId: _identityId,
-            credentialType: _credentialType,
-            credentialHash: _credentialHash,
-            issuer: msg.sender,
-            issuedAt: block.timestamp,
-            expiresAt: _expiresAt,
-            isActive: true,
-            metadataUri: _metadataUri
+        // Create verification session
+        verificationSessions[sessionId] = VerificationSession({
+            user: msg.sender,
+            challenge: challenge,
+            createdAt: block.timestamp,
+            expiresAt: block.timestamp + SESSION_DURATION,
+            isCompleted: false,
+            isValid: true
         });
         
-        identityCredentials[_identityId].push(credentialId);
-        typeToIdentityCredential[_credentialType][_identityId] = credentialId;
+        return sessionId;
+    }
+    
+    /**
+     * @notice Complete biometric verification
+     * @param sessionId Session identifier
+     * @param biometricProof Proof of biometric verification
+     * @param signature Signature from authorized verifier
+     */
+    function completeBiometricVerification(
+        bytes32 sessionId,
+        bytes32 biometricProof,
+        bytes memory signature
+    ) external onlyAuthorizedVerifier validSession(sessionId) nonReentrant whenNotPaused {
+        VerificationSession storage session = verificationSessions[sessionId];
+        require(!session.isCompleted, "Session already completed");
         
-        emit CredentialIssued(credentialId, _identityId, _credentialType);
-        return credentialId;
-    }
-    
-    function verifyCredential(bytes32 _credentialId) external view returns (bool) {
-        Credential memory credential = credentials[_credentialId];
+        address user = session.user;
         
-        return (
-            credential.issuer != address(0) &&
-            credential.isActive &&
-            credential.expiresAt > block.timestamp
-        );
-    }
-    
-    function revokeCredential(bytes32 _credentialId) external {
-        require(
-            credentials[_credentialId].issuer == msg.sender || 
-            hasRole(DEFAULT_ADMIN_ROLE, msg.sender),
-            "Not authorized"
-        );
+        // Verify signature
+        bytes32 messageHash = keccak256(abi.encodePacked(sessionId, biometricProof, user));
+        bytes32 ethSignedMessageHash = messageHash.toEthSignedMessageHash();
+        address signer = ethSignedMessageHash.recover(signature);
+        require(authorizedVerifiers[signer], "Invalid signature");
         
-        credentials[_credentialId].isActive = false;
-        emit CredentialRevoked(_credentialId, credentials[_credentialId].identityId);
-    }
-    
-    function getCredentialsByIdentity(uint256 _identityId) external view returns (bytes32[] memory) {
-        return identityCredentials[_identityId];
-    }
-    
-    function getCredentialByType(
-        string memory _credentialType,
-        uint256 _identityId
-    ) external view returns (bytes32) {
-        return typeToIdentityCredential[_credentialType][_identityId];
-    }
-}
-
-// Reputation System Contract
-contract ReputationSystem is AccessControl, ReentrancyGuard {
-    bytes32 public constant REPUTATION_UPDATER_ROLE = keccak256("REPUTATION_UPDATER_ROLE");
-    
-    struct ReputationRecord {
-        uint256 identityId;
-        uint256 score;
-        uint256 totalVerifications;
-        uint256 successfulVerifications;
-        uint256 failedVerifications;
-        uint256 lastUpdated;
-        mapping(string => uint256) categoryScores;
-    }
-    
-    mapping(uint256 => ReputationRecord) public reputationRecords;
-    mapping(uint256 => string[]) public identityCategories;
-    
-    event ReputationUpdated(uint256 indexed identityId, uint256 newScore);
-    event CategoryScoreUpdated(uint256 indexed identityId, string category, uint256 score);
-    
-    function updateReputationScore(
-        uint256 _identityId,
-        bool _verificationSuccess,
-        string memory _category
-    ) external onlyRole(REPUTATION_UPDATER_ROLE) {
-        ReputationRecord storage record = reputationRecords[_identityId];
+        // Update user verification status
+        users[user].isVerified = true;
+        users[user].lastVerification = block.timestamp;
+        users[user].verificationCount++;
         
-        if (record.identityId == 0) {
-            record.identityId = _identityId;
-            record.score = 100; // Starting score
+        // Mark session as completed
+        session.isCompleted = true;
+        
+        totalVerifications++;
+        
+        emit BiometricVerified(user, sessionId, block.timestamp);
+    }
+    
+    /**
+     * @notice Submit and verify ZK proof
+     * @param commitment ZK proof commitment
+     * @param challenge ZK proof challenge
+     * @param response ZK proof response
+     * @return proofHash Hash of the verified proof
+     */
+    function submitZKProof(
+        bytes32 commitment,
+        bytes32 challenge,
+        bytes32 response
+    ) external onlyRegisteredUser nonReentrant whenNotPaused returns (bytes32 proofHash) {
+        require(commitment != bytes32(0), "Invalid commitment");
+        require(challenge != bytes32(0), "Invalid challenge");
+        require(response != bytes32(0), "Invalid response");
+        
+        // Verify ZK proof (simplified - in production, use proper ZK verification)
+        bool isValid = verifyZKProof(msg.sender, commitment, challenge, response);
+        require(isValid, "Invalid ZK proof");
+        
+        // Create proof hash
+        proofHash = keccak256(abi.encodePacked(commitment, challenge, response, msg.sender));
+        
+        // Store proof
+        zkProofs[proofHash] = ZKProof({
+            commitment: commitment,
+            challenge: challenge,
+            response: response,
+            prover: msg.sender,
+            timestamp: block.timestamp,
+            isVerified: isValid
+        });
+        
+        totalZKProofs++;
+        
+        emit ZKProofVerified(msg.sender, proofHash, block.timestamp);
+        
+        return proofHash;
+    }
+    
+    /**
+     * @notice Grant access to a resource
+     * @param user User address
+     * @param resourceId Resource identifier
+     * @param duration Access duration in seconds
+     */
+    function grantAccess(
+        address user,
+        bytes32 resourceId,
+        uint256 duration
+    ) external onlyAuthorizedVerifier nonReentrant whenNotPaused {
+        require(users[user].isActive, "User not registered");
+        require(users[user].isVerified, "User not verified");
+        require(resourceId != bytes32(0), "Invalid resource ID");
+        require(duration > 0, "Invalid duration");
+        
+        // Check if resource requires ZK proof
+        if (accessControls[resourceId].requiresZKProof) {
+            require(hasValidZKProof(user), "Valid ZK proof required");
         }
         
-        record.totalVerifications++;
-        record.lastUpdated = block.timestamp;
+        // Grant access
+        users[user].accessRights[resourceId] = true;
+        userAccessExpiry[user][resourceId] = block.timestamp + duration;
         
-        if (_verificationSuccess) {
-            record.successfulVerifications++;
-            record.score = _calculateScoreIncrease(record.score);
-            record.categoryScores[_category] = _calculateCategoryScore(record.categoryScores[_category], true);
-        } else {
-            record.failedVerifications++;
-            record.score = _calculateScoreDecrease(record.score);
-            record.categoryScores[_category] = _calculateCategoryScore(record.categoryScores[_category], false);
+        emit AccessGranted(user, resourceId, block.timestamp);
+    }
+    
+    /**
+     * @notice Revoke access to a resource
+     * @param user User address
+     * @param resourceId Resource identifier
+     */
+    function revokeAccess(
+        address user,
+        bytes32 resourceId
+    ) external onlyAuthorizedVerifier nonReentrant whenNotPaused {
+        users[user].accessRights[resourceId] = false;
+        userAccessExpiry[user][resourceId] = 0;
+        
+        emit AccessRevoked(user, resourceId, block.timestamp);
+    }
+    
+    /**
+     * @notice Check if user has access to a resource
+     * @param user User address
+     * @param resourceId Resource identifier
+     * @return hasAccess Whether user has access
+     */
+    function hasAccess(address user, bytes32 resourceId) external view returns (bool hasAccess) {
+        if (!users[user].isActive || !users[user].isVerified) {
+            return false;
         }
         
-        emit ReputationUpdated(_identityId, record.score);
-        emit CategoryScoreUpdated(_identityId, _category, record.categoryScores[_category]);
+        if (!users[user].accessRights[resourceId]) {
+            return false;
+        }
+        
+        if (block.timestamp > userAccessExpiry[user][resourceId]) {
+            return false;
+        }
+        
+        return true;
     }
     
-    function getReputationScore(uint256 _identityId) external view returns (uint256) {
-        return reputationRecords[_identityId].score;
+    /**
+     * @notice Create access control for a resource
+     * @param resourceId Resource identifier
+     * @param minVerificationLevel Minimum verification level required
+     * @param maxAccessDuration Maximum access duration
+     * @param requiresZKProof Whether ZK proof is required
+     */
+    function createAccessControl(
+        bytes32 resourceId,
+        uint256 minVerificationLevel,
+        uint256 maxAccessDuration,
+        bool requiresZKProof
+    ) external onlyOwner {
+        accessControls[resourceId] = AccessControl({
+            resourceId: resourceId,
+            authorizedUsers: new address[](0),
+            minVerificationLevel: minVerificationLevel,
+            maxAccessDuration: maxAccessDuration,
+            requiresZKProof: requiresZKProof,
+            isActive: true
+        });
     }
     
-    function getReputationDetails(uint256 _identityId) external view returns (
-        uint256 score,
-        uint256 totalVerifications,
-        uint256 successfulVerifications,
-        uint256 failedVerifications,
-        uint256 lastUpdated
+    /**
+     * @notice Add authorized verifier
+     * @param verifier Address of the verifier
+     */
+    function addAuthorizedVerifier(address verifier) external onlyOwner {
+        require(verifier != address(0), "Invalid verifier address");
+        authorizedVerifiers[verifier] = true;
+    }
+    
+    /**
+     * @notice Remove authorized verifier
+     * @param verifier Address of the verifier
+     */
+    function removeAuthorizedVerifier(address verifier) external onlyOwner {
+        authorizedVerifiers[verifier] = false;
+    }
+    
+    /**
+     * @notice Emergency pause contract
+     */
+    function pause() external onlyOwner {
+        _pause();
+    }
+    
+    /**
+     * @notice Unpause contract
+     */
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+    
+    /**
+     * @notice Report security breach
+     * @param user User involved in breach
+     * @param reason Reason for breach
+     */
+    function reportSecurityBreach(address user, string memory reason) external onlyAuthorizedVerifier {
+        users[user].isVerified = false;
+        securityBreaches++;
+        
+        emit SecurityBreach(user, reason, block.timestamp);
+    }
+    
+    /**
+     * @notice Get user information
+     * @param user User address
+     * @return User information struct
+     */
+    function getUserInfo(address user) external view returns (
+        bytes32 identityHash,
+        uint256 registrationTime,
+        uint256 lastVerification,
+        uint256 verificationCount,
+        bool isActive,
+        bool isVerified
     ) {
-        ReputationRecord storage record = reputationRecords[_identityId];
+        User storage userData = users[user];
         return (
-            record.score,
-            record.totalVerifications,
-            record.successfulVerifications,
-            record.failedVerifications,
-            record.lastUpdated
+            userData.identityHash,
+            userData.registrationTime,
+            userData.lastVerification,
+            userData.verificationCount,
+            userData.isActive,
+            userData.isVerified
         );
     }
     
-    function _calculateScoreIncrease(uint256 _currentScore) internal pure returns (uint256) {
-        if (_currentScore < 500) {
-            return _currentScore + 20;
-        } else if (_currentScore < 800) {
-            return _currentScore + 10;
-        } else if (_currentScore < 950) {
-            return _currentScore + 5;
-        } else {
-            return _currentScore + 1;
-        }
+    /**
+     * @notice Get system statistics
+     * @return System statistics
+     */
+    function getSystemStats() external view returns (
+        uint256 _totalUsers,
+        uint256 _totalVerifications,
+        uint256 _totalZKProofs,
+        uint256 _securityBreaches
+    ) {
+        return (totalUsers, totalVerifications, totalZKProofs, securityBreaches);
     }
     
-    function _calculateScoreDecrease(uint256 _currentScore) internal pure returns (uint256) {
-        if (_currentScore > 800) {
-            return _currentScore - 5;
-        } else if (_currentScore > 500) {
-            return _currentScore - 10;
-        } else if (_currentScore > 100) {
-            return _currentScore - 15;
-        } else {
-            return _currentScore;
-        }
-    }
-    
-    function _calculateCategoryScore(uint256 _currentScore, bool _success) internal pure returns (uint256) {
-        if (_currentScore == 0) {
-            _currentScore = 100;
-        }
+    /**
+     * @notice Verify ZK proof (simplified implementation)
+     * @param user User address
+     * @param commitment Proof commitment
+     * @param challenge Proof challenge
+     * @param response Proof response
+     * @return isValid Whether proof is valid
+     */
+    function verifyZKProof(
+        address user,
+        bytes32 commitment,
+        bytes32 challenge,
+        bytes32 response
+    ) internal view returns (bool isValid) {
+        // Simplified ZK proof verification
+        // In production, implement proper zero-knowledge proof verification
+        bytes32 userCommitment = users[user].zkProofCommitment;
+        bytes32 expectedResponse = keccak256(abi.encodePacked(userCommitment, challenge));
         
-        if (_success) {
-            return _currentScore < 950 ? _currentScore + 10 : _currentScore + 1;
-        } else {
-            return _currentScore > 50 ? _currentScore - 20 : _currentScore;
-        }
+        return expectedResponse == response;
+    }
+    
+    /**
+     * @notice Check if user has valid ZK proof
+     * @param user User address
+     * @return hasValid Whether user has valid ZK proof
+     */
+    function hasValidZKProof(address user) internal view returns (bool hasValid) {
+        // Check if user has any recent valid ZK proof
+        // This is simplified - in production, implement proper proof tracking
+        return users[user].zkProofCommitment != bytes32(0);
+    }
+    
+    /**
+     * @notice Upgrade contract (placeholder for upgradability)
+     * @param newContract New contract address
+     */
+    function upgradeContract(address newContract) external onlyOwner {
+        require(newContract != address(0), "Invalid contract address");
+        emit SystemUpgraded(address(this), newContract, block.timestamp);
+        // Implement upgrade logic here
+    }
+    
+    /**
+     * @notice Fallback function
+     */
+    receive() external payable {
+        revert("Contract does not accept Ether");
     }
 }
