@@ -1,852 +1,1126 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Decentralized Identity System</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
-    <script>
-        // ... Tailwind config (unchanged) ...
-        tailwind.config = {
-            theme: {
-                extend: {
-                    animation: {
-                        'pulse-slow': 'pulse 3s infinite',
-                        'float': 'float 3s ease-in-out infinite',
-                    },
-                    keyframes: {
-                        float: {
-                            '0%, 100%': { transform: 'translateY(0px)' },
-                            '50%': { transform: 'translateY(-10px)' },
-                        }
-                    }
-                }
-            }
-        }
-    </script>
-</head>
-<body class="bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 min-h-screen text-white">
+"use client"
 
-<!-- ... HEADER / NAV / TABS / FORMS are unchanged ... -->
+import { useState, useEffect, useRef } from "react"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Badge } from "@/components/ui/badge"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Separator } from "@/components/ui/separator"
+import { Progress } from "@/components/ui/progress"
+import {
+  Shield,
+  User,
+  Key,
+  CheckCircle,
+  XCircle,
+  Clock,
+  Database,
+  Activity,
+  Hash,
+  TreePine,
+  Fingerprint,
+  Lock,
+  Unlock,
+  AlertCircle,
+  Zap,
+  Cpu,
+} from "lucide-react"
+import anime from "animejs"
 
-<!-- Replace ONLY ZKProofSystem JS logic with API calls -->
-<script>
-    // ...other code...
+interface BiometricUser {
+  id: string
+  registered: boolean
+  biometricHash?: string
+  commitment?: string
+  publicKey?: string
+  lastVerified?: string
+}
 
-    // Generate ZK proof (calls backend)
-    document.getElementById('zkProofForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const proofType = document.getElementById('proofType').value;
-        const threshold = document.getElementById('threshold').value;
-        const secretValue = document.getElementById('secretValue').value;
-        if (!secretValue || (proofType === 'age' && !threshold)) {
-            alert('Please fill in all required fields');
-            return;
-        }
-        // Send to backend for proof generation
-        const resp = await fetch('/api/zk/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ proof_type: proofType, threshold, secret_value: secretValue })
-        });
-        const data = await resp.json();
-        if (data && data.proof) {
-            document.getElementById('proofData').value = JSON.stringify(data.proof, null, 2);
-            alert('ZK Proof generated successfully!');
-        } else {
-            alert('Failed to generate ZK proof');
-        }
-    });
+interface VerificationSession {
+  sessionId: string
+  userId: string
+  challenge: string
+  status: "active" | "completed" | "expired"
+  createdAt: string
+  progress?: number
+}
 
-    // Verify ZK proof (calls backend)
-    document.getElementById('verifyZkProofForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const proofData = document.getElementById('proofData').value;
-        if (!proofData) {
-            alert('Please provide proof data');
-            return;
-        }
-        // Send to backend for verification
-        const resp = await fetch('/api/zk/verify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ proof: proofData })
-        });
-        const data = await resp.json();
-        const resultDiv = document.getElementById('verificationResult');
-        const iconDiv = document.getElementById('verificationIcon');
-        const textSpan = document.getElementById('verificationText');
-        if (data.valid) {
-            resultDiv.className = 'mt-6 p-4 rounded-lg bg-green-500/20 border border-green-500/30';
-            iconDiv.innerHTML = '<svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>';
-            textSpan.textContent = 'Proof verified successfully!';
-            textSpan.className = 'font-medium text-green-400';
-        } else {
-            resultDiv.className = 'mt-6 p-4 rounded-lg bg-red-500/20 border border-red-500/30';
-            iconDiv.innerHTML = '<svg class="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>';
-            textSpan.textContent = 'Proof verification failed!';
-            textSpan.className = 'font-medium text-red-400';
-        }
-        resultDiv.classList.remove('hidden');
-    });
+interface MerkleSystem {
+  id: string
+  rootHash: string
+  treeSize: number
+  data: string[]
+}
+
+interface SystemStats {
+  activeSessions: number
+  merkleSystems: number
+  biometricCommitments: number
+  timestamp: string
+}
+
+export default function ZKProofDashboard() {
+  const [users, setUsers] = useState<BiometricUser[]>([])
+  const [sessions, setSessions] = useState<VerificationSession[]>([])
+  const [merkleSystems, setMerkleSystems] = useState<MerkleSystem[]>([])
+  const [stats, setStats] = useState<SystemStats>({
+    activeSessions: 0,
+    merkleSystems: 0,
+    biometricCommitments: 0,
+    timestamp: new Date().toISOString(),
+  })
+  const [alerts, setAlerts] = useState<Array<{ id: string; type: "success" | "error" | "info"; message: string }>>([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [activeTab, setActiveTab] = useState("registration")
+
+  // Animation refs
+  const headerRef = useRef<HTMLDivElement>(null)
+  const statsRef = useRef<HTMLDivElement>(null)
+  const tabsRef = useRef<HTMLDivElement>(null)
+  const alertsRef = useRef<HTMLDivElement>(null)
+
+  // Registration form state
+  const [newUserId, setNewUserId] = useState("")
+  const [biometricData, setBiometricData] = useState("")
+
+  // Verification form state
+  const [verifyUserId, setVerifyUserId] = useState("")
+  const [verifyBiometricData, setVerifyBiometricData] = useState("")
+
+  // Merkle tree form state
+  const [merkleSystemId, setMerkleSystemId] = useState("")
+  const [merkleData, setMerkleData] = useState("")
+
+  // Initial page load animation
+  useEffect(() => {
+    const tl = anime.timeline({
+      easing: "easeOutExpo",
+      duration: 800,
+    })
+
+    tl.add({
+      targets: headerRef.current,
+      translateY: [-50, 0],
+      opacity: [0, 1],
+      duration: 1000,
+    })
+      .add(
+        {
+          targets: statsRef.current?.children,
+          translateY: [30, 0],
+          opacity: [0, 1],
+          delay: anime.stagger(100),
+          duration: 600,
+        },
+        "-=600",
+      )
+      .add(
+        {
+          targets: tabsRef.current,
+          translateY: [20, 0],
+          opacity: [0, 1],
+          duration: 600,
+        },
+        "-=400",
+      )
+
+    // Floating animation for shield icon
+    anime({
+      targets: ".shield-icon",
+      translateY: [-5, 5],
+      duration: 2000,
+      direction: "alternate",
+      loop: true,
+      easing: "easeInOutSine",
+    })
+
+    // Pulse animation for stats
+    anime({
+      targets: ".stat-number",
+      scale: [1, 1.05, 1],
+      duration: 2000,
+      delay: anime.stagger(200),
+      loop: true,
+      easing: "easeInOutQuad",
+    })
+  }, [])
+
+  // Alert animation
+  useEffect(() => {
+    if (alerts.length > 0) {
+      anime({
+        targets: ".alert-item:last-child",
+        translateX: [-300, 0],
+        opacity: [0, 1],
+        duration: 500,
+        easing: "easeOutBack",
+      })
+    }
+  }, [alerts])
+
+  const addAlert = (type: "success" | "error" | "info", message: string) => {
+    const id = Math.random().toString(36).substr(2, 9)
+    setAlerts((prev) => [...prev, { id, type, message }])
+
+    setTimeout(() => {
+      // Animate out
+      anime({
+        targets: `[data-alert-id="${id}"]`,
+        translateX: [0, 300],
+        opacity: [1, 0],
+        duration: 300,
+        easing: "easeInBack",
+        complete: () => {
+          setAlerts((prev) => prev.filter((alert) => alert.id !== id))
+        },
+      })
+    }, 5000)
+  }
+
+  const animateButton = (target: HTMLElement) => {
+    anime({
+      targets: target,
+      scale: [1, 0.95, 1],
+      duration: 200,
+      easing: "easeOutQuad",
+    })
+  }
+
+  const animateCardEntry = (selector: string) => {
+    anime({
+      targets: selector,
+      translateY: [20, 0],
+      opacity: [0, 1],
+      scale: [0.95, 1],
+      duration: 500,
+      easing: "easeOutBack",
+    })
+  }
+
+  const simulateHash = (data: string): string => {
+    let hash = 0
+    for (let i = 0; i < data.length; i++) {
+      const char = data.charCodeAt(i)
+      hash = (hash << 5) - hash + char
+      hash = hash & hash
+    }
+    return Math.abs(hash).toString(16).padStart(8, "0")
+  }
+
+  const generateRandomHex = (length: number): string => {
+    return Array.from({ length }, () => Math.floor(Math.random() * 16).toString(16)).join("")
+  }
+
+  const registerUser = async () => {
+    if (!newUserId || !biometricData) {
+      addAlert("error", "Please provide both User ID and biometric data")
+      return
+    }
+
+    if (users.find((u) => u.id === newUserId)) {
+      addAlert("error", "User already exists")
+      return
+    }
+
+    setIsLoading(true)
+
+    // Loading animation
+    anime({
+      targets: ".register-button",
+      rotate: [0, 360],
+      duration: 1000,
+      easing: "easeInOutQuad",
+    })
+
+    // Simulate processing delay
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+
+    const biometricHash = simulateHash(biometricData)
+    const commitment = generateRandomHex(64)
+    const publicKey = generateRandomHex(128)
+
+    const newUser: BiometricUser = {
+      id: newUserId,
+      registered: true,
+      biometricHash,
+      commitment,
+      publicKey,
+    }
+
+    setUsers((prev) => [...prev, newUser])
+    setStats((prev) => ({ ...prev, biometricCommitments: prev.biometricCommitments + 1 }))
+
+    // Animate stats update
+    anime({
+      targets: ".stat-number",
+      innerHTML: [stats.biometricCommitments, stats.biometricCommitments + 1],
+      duration: 1000,
+      round: 1,
+      easing: "easeOutExpo",
+    })
+
+    addAlert("success", `User ${newUserId} registered successfully with ZK commitment`)
+    setNewUserId("")
+    setBiometricData("")
+    setIsLoading(false)
+
+    // Animate new user card
+    setTimeout(() => {
+      animateCardEntry(".user-card:last-child")
+    }, 100)
+  }
+
+  const initiateVerification = async () => {
+    if (!verifyUserId) {
+      addAlert("error", "Please provide User ID")
+      return
+    }
+
+    const user = users.find((u) => u.id === verifyUserId)
+    if (!user) {
+      addAlert("error", "User not found")
+      return
+    }
+
+    setIsLoading(true)
+
+    // Create verification session with progress
+    const sessionId = generateRandomHex(16)
+    const challenge = generateRandomHex(64)
+
+    const newSession: VerificationSession = {
+      sessionId,
+      userId: verifyUserId,
+      challenge,
+      status: "active",
+      createdAt: new Date().toISOString(),
+      progress: 0,
+    }
+
+    setSessions((prev) => [...prev, newSession])
+    setStats((prev) => ({ ...prev, activeSessions: prev.activeSessions + 1 }))
+
+    addAlert("info", `Verification session initiated for ${verifyUserId}`)
+
+    // Animate progress
+    const progressAnimation = anime({
+      targets: { progress: 0 },
+      progress: 100,
+      duration: 2000,
+      easing: "easeOutQuad",
+      update: (anim) => {
+        const progress = Math.round(anim.animatables[0].target.progress)
+        setSessions((prev) => prev.map((s) => (s.sessionId === sessionId ? { ...s, progress } : s)))
+      },
+      complete: () => {
+        completeVerification(sessionId)
+      },
+    })
+
+    setIsLoading(false)
+  }
+
+  const completeVerification = (sessionId: string) => {
+    const session = sessions.find((s) => s.sessionId === sessionId)
+    if (!session) return
+
+    const user = users.find((u) => u.id === session.userId)
+    if (!user) return
+
+    const providedHash = simulateHash(verifyBiometricData)
+    const isValid = providedHash === user.biometricHash
+
+    // Success/failure animation
+    anime({
+      targets: ".verification-result",
+      scale: [0, 1.2, 1],
+      rotate: [0, isValid ? 360 : -180],
+      duration: 800,
+      easing: "easeOutBack",
+    })
+
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.sessionId === sessionId ? { ...s, status: isValid ? "completed" : "expired", progress: 100 } : s,
+      ),
+    )
+
+    setUsers((prev) =>
+      prev.map((u) => (u.id === session.userId ? { ...u, lastVerified: new Date().toISOString() } : u)),
+    )
+
+    setStats((prev) => ({ ...prev, activeSessions: Math.max(0, prev.activeSessions - 1) }))
+
+    if (isValid) {
+      addAlert("success", `ZK verification successful for ${session.userId}`)
+      // Success particle effect
+      anime({
+        targets: ".success-particle",
+        translateY: [0, -50],
+        translateX: () => anime.random(-50, 50),
+        opacity: [1, 0],
+        scale: [0, 1, 0],
+        duration: 1000,
+        delay: anime.stagger(100),
+        easing: "easeOutQuad",
+      })
+    } else {
+      addAlert("error", `ZK verification failed for ${session.userId}`)
+      // Shake animation for failure
+      anime({
+        targets: ".verification-card",
+        translateX: [0, -10, 10, -10, 10, 0],
+        duration: 500,
+        easing: "easeInOutQuad",
+      })
+    }
+
+    setVerifyUserId("")
+    setVerifyBiometricData("")
+  }
+
+  const createMerkleSystem = () => {
+    if (!merkleSystemId || !merkleData) {
+      addAlert("error", "Please provide system ID and data")
+      return
+    }
+
+    if (merkleSystems.find((s) => s.id === merkleSystemId)) {
+      addAlert("error", "Merkle system already exists")
+      return
+    }
+
+    const dataList = merkleData
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s)
+    if (dataList.length === 0) {
+      addAlert("error", "Please provide valid comma-separated data")
+      return
+    }
+
+    // Tree building animation
+    anime({
+      targets: ".merkle-icon",
+      rotate: [0, 720],
+      scale: [1, 1.5, 1],
+      duration: 1500,
+      easing: "easeOutBack",
+    })
+
+    const rootHash = simulateHash(dataList.join(""))
+
+    const newSystem: MerkleSystem = {
+      id: merkleSystemId,
+      rootHash,
+      treeSize: dataList.length,
+      data: dataList,
+    }
+
+    setMerkleSystems((prev) => [...prev, newSystem])
+    setStats((prev) => ({ ...prev, merkleSystems: prev.merkleSystems + 1 }))
+
+    addAlert("success", `Merkle system ${merkleSystemId} created with ${dataList.length} items`)
+    setMerkleSystemId("")
+    setMerkleData("")
+
+    // Animate new system card
+    setTimeout(() => {
+      animateCardEntry(".merkle-card:last-child")
+    }, 100)
+  }
+
+  const generateMerkleProof = (systemId: string, data: string) => {
+    const system = merkleSystems.find((s) => s.id === systemId)
+    if (!system) return
+
+    const index = system.data.indexOf(data)
+    if (index === -1) {
+      addAlert("error", "Data not found in Merkle tree")
+      return
+    }
+
+    // Proof generation animation
+    anime({
+      targets: ".proof-button",
+      backgroundColor: ["#3b82f6", "#10b981", "#3b82f6"],
+      duration: 1000,
+      easing: "easeInOutQuad",
+    })
+
+    const proofSteps = Math.ceil(Math.log2(system.treeSize))
+    addAlert("success", `Merkle proof generated for "${data}" with ${proofSteps} steps`)
+  }
+
+  const handleTabChange = (value: string) => {
+    setActiveTab(value)
+
+    // Tab transition animation
+    anime({
+      targets: ".tab-content",
+      opacity: [0, 1],
+      translateY: [20, 0],
+      duration: 400,
+      easing: "easeOutQuad",
+    })
+  }
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setStats((prev) => ({
+        ...prev,
+        timestamp: new Date().toISOString(),
+      }))
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [])
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 p-4 relative overflow-hidden">
+      {/* Animated background elements */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-1/4 left-1/4 w-64 h-64 bg-blue-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-pulse"></div>
+        <div
+          className="absolute top-3/4 right-1/4 w-64 h-64 bg-purple-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-pulse"
+          style={{ animationDelay: "2s" }}
+        ></div>
+        <div
+          className="absolute top-1/2 left-1/2 w-64 h-64 bg-pink-200 rounded-full mix-blend-multiply filter blur-xl opacity-30 animate-pulse"
+          style={{ animationDelay: "4s" }}
+        ></div>
+      </div>
+
+      <div className="max-w-7xl mx-auto space-y-6 relative z-10">
+        {/* Header */}
+        <div ref={headerRef} className="text-center space-y-2 opacity-0">
+          <div className="flex items-center justify-center gap-2">
+            <Shield className="shield-icon h-8 w-8 text-blue-600" />
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+              Zero Knowledge Proof System
+            </h1>
+          </div>
+          <p className="text-gray-600">Advanced biometric verification with privacy-preserving cryptography</p>
+          <div className="flex items-center justify-center gap-2 mt-4">
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              <span className="text-sm text-green-600 font-medium">System Online</span>
+            </div>
+            <Separator orientation="vertical" className="h-4" />
+            <div className="flex items-center gap-1">
+              <Cpu className="h-4 w-4 text-blue-600" />
+              <span className="text-sm text-blue-600">ZK Engine Active</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Alerts */}
+        {alerts.length > 0 && (
+          <div ref={alertsRef} className="space-y-2">
+            {alerts.map((alert) => (
+              <Alert
+                key={alert.id}
+                data-alert-id={alert.id}
+                className={`alert-item transform transition-all duration-300 ${
+                  alert.type === "success"
+                    ? "border-green-200 bg-green-50 shadow-green-100"
+                    : alert.type === "error"
+                      ? "border-red-200 bg-red-50 shadow-red-100"
+                      : "border-blue-200 bg-blue-50 shadow-blue-100"
+                } shadow-lg`}
+              >
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription className="font-medium">{alert.message}</AlertDescription>
+              </Alert>
+            ))}
+          </div>
+        )}
+
+        {/* Stats Cards */}
+        <div ref={statsRef} className="grid grid-cols-1 md:grid-cols-4 gap-4 opacity-0">
+          <Card className="bg-white/80 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-blue-100 rounded-lg">
+                  <Activity className="h-5 w-5 text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Active Sessions</p>
+                  <p className="stat-number text-2xl font-bold text-blue-600">{stats.activeSessions}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-white/80 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-green-100 rounded-lg">
+                  <User className="h-5 w-5 text-green-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Registered Users</p>
+                  <p className="stat-number text-2xl font-bold text-green-600">{stats.biometricCommitments}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-white/80 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-purple-100 rounded-lg">
+                  <TreePine className="h-5 w-5 text-purple-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Merkle Systems</p>
+                  <p className="stat-number text-2xl font-bold text-purple-600">{stats.merkleSystems}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-white/80 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-orange-100 rounded-lg">
+                  <Clock className="h-5 w-5 text-orange-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-gray-600">Last Update</p>
+                  <p className="text-sm font-medium text-orange-600">
+                    {new Date(stats.timestamp).toLocaleTimeString()}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Main Interface */}
+        <div ref={tabsRef} className="opacity-0">
+          <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
+            <TabsList className="grid w-full grid-cols-4 bg-white/80 backdrop-blur-sm shadow-lg">
+              <TabsTrigger
+                value="registration"
+                className="data-[state=active]:bg-blue-500 data-[state=active]:text-white transition-all duration-300"
+              >
+                Registration
+              </TabsTrigger>
+              <TabsTrigger
+                value="verification"
+                className="data-[state=active]:bg-green-500 data-[state=active]:text-white transition-all duration-300"
+              >
+                Verification
+              </TabsTrigger>
+              <TabsTrigger
+                value="merkle"
+                className="data-[state=active]:bg-purple-500 data-[state=active]:text-white transition-all duration-300"
+              >
+                Merkle Trees
+              </TabsTrigger>
+              <TabsTrigger
+                value="monitoring"
+                className="data-[state=active]:bg-orange-500 data-[state=active]:text-white transition-all duration-300"
+              >
+                Monitoring
+              </TabsTrigger>
+            </TabsList>
+
+            {/* Registration Tab */}
+            <TabsContent value="registration" className="tab-content space-y-4">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-xl hover:shadow-2xl transition-all duration-300">
+                  <CardHeader className="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-t-lg">
+                    <CardTitle className="flex items-center gap-2">
+                      <Fingerprint className="h-5 w-5" />
+                      Biometric Registration
+                    </CardTitle>
+                    <CardDescription className="text-blue-100">
+                      Register new users with zero-knowledge biometric commitments
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4 p-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="userId" className="text-gray-700 font-medium">
+                        User ID
+                      </Label>
+                      <Input
+                        id="userId"
+                        placeholder="Enter unique user ID"
+                        value={newUserId}
+                        onChange={(e) => setNewUserId(e.target.value)}
+                        className="border-2 border-gray-200 focus:border-blue-500 transition-colors duration-300"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="biometric" className="text-gray-700 font-medium">
+                        Biometric Data
+                      </Label>
+                      <Input
+                        id="biometric"
+                        placeholder="Enter biometric template data"
+                        value={biometricData}
+                        onChange={(e) => setBiometricData(e.target.value)}
+                        className="border-2 border-gray-200 focus:border-blue-500 transition-colors duration-300"
+                      />
+                    </div>
+                    <Button
+                      onClick={(e) => {
+                        animateButton(e.currentTarget)
+                        registerUser()
+                      }}
+                      className="register-button w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 transition-all duration-300 transform hover:scale-105"
+                      disabled={isLoading}
+                    >
+                      {isLoading ? (
+                        <div className="flex items-center gap-2">
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          Processing...
+                        </div>
+                      ) : (
+                        <>
+                          <Lock className="h-4 w-4 mr-2" />
+                          Register with ZK Commitment
+                        </>
+                      )}
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-xl">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <User className="h-5 w-5 text-blue-600" />
+                      Registered Users
+                    </CardTitle>
+                    <CardDescription>Users with ZK biometric commitments</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3 max-h-96 overflow-y-auto">
+                      {users.length === 0 ? (
+                        <div className="text-center py-8">
+                          <User className="h-12 w-12 text-gray-300 mx-auto mb-2" />
+                          <p className="text-gray-500">No users registered yet</p>
+                        </div>
+                      ) : (
+                        users.map((user, index) => (
+                          <div
+                            key={user.id}
+                            className="user-card flex items-center justify-between p-4 border-2 border-gray-100 rounded-lg hover:border-blue-200 hover:shadow-md transition-all duration-300 bg-gradient-to-r from-white to-blue-50"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="p-2 bg-blue-100 rounded-full">
+                                <User className="h-4 w-4 text-blue-600" />
+                              </div>
+                              <div>
+                                <p className="font-medium text-gray-800">{user.id}</p>
+                                <p className="text-xs text-gray-500">Hash: {user.biometricHash?.substring(0, 8)}...</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Badge className="bg-green-100 text-green-800 border-green-200">
+                                <CheckCircle className="h-3 w-3 mr-1" />
+                                Registered
+                              </Badge>
+                              {user.lastVerified && (
+                                <Badge variant="outline" className="border-blue-200 text-blue-600">
+                                  <Clock className="h-3 w-3 mr-1" />
+                                  Verified
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+
+            {/* Verification Tab */}
+            <TabsContent value="verification" className="tab-content space-y-4">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card className="verification-card bg-white/90 backdrop-blur-sm border-0 shadow-xl hover:shadow-2xl transition-all duration-300">
+                  <CardHeader className="bg-gradient-to-r from-green-500 to-green-600 text-white rounded-t-lg">
+                    <CardTitle className="flex items-center gap-2">
+                      <Key className="h-5 w-5" />
+                      ZK Verification
+                    </CardTitle>
+                    <CardDescription className="text-green-100">
+                      Verify user identity using zero-knowledge proofs
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4 p-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="verifyUserId" className="text-gray-700 font-medium">
+                        User ID
+                      </Label>
+                      <Input
+                        id="verifyUserId"
+                        placeholder="Enter user ID to verify"
+                        value={verifyUserId}
+                        onChange={(e) => setVerifyUserId(e.target.value)}
+                        className="border-2 border-gray-200 focus:border-green-500 transition-colors duration-300"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="verifyBiometric" className="text-gray-700 font-medium">
+                        Biometric Data
+                      </Label>
+                      <Input
+                        id="verifyBiometric"
+                        placeholder="Enter biometric data for verification"
+                        value={verifyBiometricData}
+                        onChange={(e) => setVerifyBiometricData(e.target.value)}
+                        className="border-2 border-gray-200 focus:border-green-500 transition-colors duration-300"
+                      />
+                    </div>
+                    <Button
+                      onClick={(e) => {
+                        animateButton(e.currentTarget)
+                        initiateVerification()
+                      }}
+                      className="w-full bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 transition-all duration-300 transform hover:scale-105"
+                      disabled={isLoading}
+                    >
+                      {isLoading ? (
+                        <div className="flex items-center gap-2">
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          Verifying...
+                        </div>
+                      ) : (
+                        <>
+                          <Unlock className="h-4 w-4 mr-2" />
+                          Initiate ZK Verification
+                        </>
+                      )}
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-xl">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Activity className="h-5 w-5 text-green-600" />
+                      Active Sessions
+                    </CardTitle>
+                    <CardDescription>Current verification sessions</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3 max-h-96 overflow-y-auto">
+                      {sessions.length === 0 ? (
+                        <div className="text-center py-8">
+                          <Hash className="h-12 w-12 text-gray-300 mx-auto mb-2" />
+                          <p className="text-gray-500">No active sessions</p>
+                        </div>
+                      ) : (
+                        sessions.slice(-5).map((session) => (
+                          <div
+                            key={session.sessionId}
+                            className="flex flex-col gap-3 p-4 border-2 border-gray-100 rounded-lg hover:border-green-200 hover:shadow-md transition-all duration-300 bg-gradient-to-r from-white to-green-50"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div className="p-2 bg-green-100 rounded-full">
+                                  <Hash className="h-4 w-4 text-green-600" />
+                                </div>
+                                <div>
+                                  <p className="font-medium text-gray-800">{session.userId}</p>
+                                  <p className="text-xs text-gray-500">
+                                    Session: {session.sessionId.substring(0, 8)}...
+                                  </p>
+                                </div>
+                              </div>
+                              <Badge
+                                className={`${
+                                  session.status === "completed"
+                                    ? "bg-green-100 text-green-800 border-green-200"
+                                    : session.status === "active"
+                                      ? "bg-blue-100 text-blue-800 border-blue-200"
+                                      : "bg-red-100 text-red-800 border-red-200"
+                                }`}
+                              >
+                                {session.status === "completed" && <CheckCircle className="h-3 w-3 mr-1" />}
+                                {session.status === "active" && <Clock className="h-3 w-3 mr-1" />}
+                                {session.status === "expired" && <XCircle className="h-3 w-3 mr-1" />}
+                                {session.status}
+                              </Badge>
+                            </div>
+                            {session.status === "active" && session.progress !== undefined && (
+                              <div className="space-y-1">
+                                <div className="flex justify-between text-xs text-gray-600">
+                                  <span>Verification Progress</span>
+                                  <span>{session.progress}%</span>
+                                </div>
+                                <Progress value={session.progress} className="h-2" />
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+
+            {/* Merkle Trees Tab */}
+            <TabsContent value="merkle" className="tab-content space-y-4">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-xl hover:shadow-2xl transition-all duration-300">
+                  <CardHeader className="bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-t-lg">
+                    <CardTitle className="flex items-center gap-2">
+                      <TreePine className="merkle-icon h-5 w-5" />
+                      Create Merkle System
+                    </CardTitle>
+                    <CardDescription className="text-purple-100">
+                      Create Merkle trees for efficient batch proofs
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4 p-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="merkleId" className="text-gray-700 font-medium">
+                        System ID
+                      </Label>
+                      <Input
+                        id="merkleId"
+                        placeholder="Enter system identifier"
+                        value={merkleSystemId}
+                        onChange={(e) => setMerkleSystemId(e.target.value)}
+                        className="border-2 border-gray-200 focus:border-purple-500 transition-colors duration-300"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="merkleData" className="text-gray-700 font-medium">
+                        Data Items
+                      </Label>
+                      <Input
+                        id="merkleData"
+                        placeholder="Enter comma-separated data items"
+                        value={merkleData}
+                        onChange={(e) => setMerkleData(e.target.value)}
+                        className="border-2 border-gray-200 focus:border-purple-500 transition-colors duration-300"
+                      />
+                    </div>
+                    <Button
+                      onClick={(e) => {
+                        animateButton(e.currentTarget)
+                        createMerkleSystem()
+                      }}
+                      className="w-full bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 transition-all duration-300 transform hover:scale-105"
+                    >
+                      <Database className="h-4 w-4 mr-2" />
+                      Create Merkle Tree
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-xl">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <TreePine className="h-5 w-5 text-purple-600" />
+                      Merkle Systems
+                    </CardTitle>
+                    <CardDescription>Active Merkle tree systems</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3 max-h-96 overflow-y-auto">
+                      {merkleSystems.length === 0 ? (
+                        <div className="text-center py-8">
+                          <TreePine className="h-12 w-12 text-gray-300 mx-auto mb-2" />
+                          <p className="text-gray-500">No Merkle systems created</p>
+                        </div>
+                      ) : (
+                        merkleSystems.map((system) => (
+                          <div
+                            key={system.id}
+                            className="merkle-card p-4 border-2 border-gray-100 rounded-lg space-y-3 hover:border-purple-200 hover:shadow-md transition-all duration-300 bg-gradient-to-r from-white to-purple-50"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <div className="p-2 bg-purple-100 rounded-full">
+                                  <TreePine className="h-4 w-4 text-purple-600" />
+                                </div>
+                                <span className="font-medium text-gray-800">{system.id}</span>
+                              </div>
+                              <Badge className="bg-purple-100 text-purple-800 border-purple-200">
+                                {system.treeSize} items
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-gray-500 font-mono bg-gray-50 p-2 rounded">
+                              Root: {system.rootHash.substring(0, 16)}...
+                            </p>
+                            <div className="flex flex-wrap gap-1">
+                              {system.data.slice(0, 3).map((item, idx) => (
+                                <Button
+                                  key={idx}
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    animateButton(e.currentTarget)
+                                    generateMerkleProof(system.id, item)
+                                  }}
+                                  className="proof-button h-6 px-2 text-xs bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 transition-all duration-300"
+                                >
+                                  {item}
+                                </Button>
+                              ))}
+                              {system.data.length > 3 && (
+                                <span className="text-xs text-gray-500 px-2 py-1 bg-gray-100 rounded">
+                                  +{system.data.length - 3} more
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+
+            {/* Monitoring Tab */}
+            <TabsContent value="monitoring" className="tab-content space-y-4">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-xl">
+                  <CardHeader className="bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-t-lg">
+                    <CardTitle className="flex items-center gap-2">
+                      <Activity className="h-5 w-5" />
+                      System Overview
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4 p-6">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="text-center p-4 bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg border border-blue-200 hover:shadow-md transition-all duration-300">
+                        <p className="text-2xl font-bold text-blue-600">{users.length}</p>
+                        <p className="text-sm text-blue-800">Total Users</p>
+                      </div>
+                      <div className="text-center p-4 bg-gradient-to-br from-green-50 to-green-100 rounded-lg border border-green-200 hover:shadow-md transition-all duration-300">
+                        <p className="text-2xl font-bold text-green-600">
+                          {users.filter((u) => u.lastVerified).length}
+                        </p>
+                        <p className="text-sm text-green-800">Verified Users</p>
+                      </div>
+                      <div className="text-center p-4 bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg border border-purple-200 hover:shadow-md transition-all duration-300">
+                        <p className="text-2xl font-bold text-purple-600">{sessions.length}</p>
+                        <p className="text-sm text-purple-800">Total Sessions</p>
+                      </div>
+                      <div className="text-center p-4 bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg border border-orange-200 hover:shadow-md transition-all duration-300">
+                        <p className="text-2xl font-bold text-orange-600">{merkleSystems.length}</p>
+                        <p className="text-sm text-orange-800">Merkle Trees</p>
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    <div className="space-y-3">
+                      <h4 className="font-medium text-gray-800">System Status</h4>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 p-2 bg-green-50 rounded-lg">
+                          <CheckCircle className="h-4 w-4 text-green-600" />
+                          <span className="text-sm text-green-800">ZK Proof System: Online</span>
+                          <div className="ml-auto w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                        </div>
+                        <div className="flex items-center gap-2 p-2 bg-green-50 rounded-lg">
+                          <CheckCircle className="h-4 w-4 text-green-600" />
+                          <span className="text-sm text-green-800">Biometric Bridge: Active</span>
+                          <div className="ml-auto w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                        </div>
+                        <div className="flex items-center gap-2 p-2 bg-green-50 rounded-lg">
+                          <CheckCircle className="h-4 w-4 text-green-600" />
+                          <span className="text-sm text-green-800">Merkle Systems: Operational</span>
+                          <div className="ml-auto w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-white/90 backdrop-blur-sm border-0 shadow-xl">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Zap className="h-5 w-5 text-orange-600" />
+                      Recent Activity
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3 max-h-96 overflow-y-auto">
+                      {[
+                        ...users.slice(-3).map((u) => ({
+                          type: "registration",
+                          user: u.id,
+                          time: "Recently",
+                          icon: User,
+                          color: "blue",
+                        })),
+                        ...sessions.slice(-3).map((s) => ({
+                          type: s.status === "completed" ? "verification" : "session",
+                          user: s.userId,
+                          time: "Recently",
+                          icon: s.status === "completed" ? CheckCircle : Clock,
+                          color: s.status === "completed" ? "green" : "orange",
+                        })),
+                      ]
+                        .slice(-5)
+                        .map((activity, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center gap-3 p-3 rounded-lg bg-gradient-to-r from-gray-50 to-gray-100 hover:from-gray-100 hover:to-gray-200 transition-all duration-300 border border-gray-200"
+                          >
+                            <div
+                              className={`p-2 rounded-full ${
+                                activity.color === "blue"
+                                  ? "bg-blue-100"
+                                  : activity.color === "green"
+                                    ? "bg-green-100"
+                                    : "bg-orange-100"
+                              }`}
+                            >
+                              <activity.icon
+                                className={`h-4 w-4 ${
+                                  activity.color === "blue"
+                                    ? "text-blue-600"
+                                    : activity.color === "green"
+                                      ? "text-green-600"
+                                      : "text-orange-600"
+                                }`}
+                              />
+                            </div>
+                            <div className="flex-1">
+                              <p className="text-sm font-medium text-gray-800">
+                                {activity.type === "registration" && `User ${activity.user} registered`}
+                                {activity.type === "verification" && `User ${activity.user} verified`}
+                                {activity.type === "session" && `Session created for ${activity.user}`}
+                              </p>
+                              <p className="text-xs text-gray-500">{activity.time}</p>
+                            </div>
+                          </div>
+                        ))}
+                      {users.length === 0 && sessions.length === 0 && (
+                        <div className="text-center py-8">
+                          <Activity className="h-12 w-12 text-gray-300 mx-auto mb-2" />
+                          <p className="text-gray-500">No recent activity</p>
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </div>
+      </div>
+
+      {/* Success particles for animations */}
+      <div className="success-particle fixed top-1/2 left-1/2 w-2 h-2 bg-green-500 rounded-full opacity-0 pointer-events-none"></div>
+      <div className="success-particle fixed top-1/2 left-1/2 w-2 h-2 bg-green-400 rounded-full opacity-0 pointer-events-none"></div>
+      <div className="success-particle fixed top-1/2 left-1/2 w-2 h-2 bg-green-600 rounded-full opacity-0 pointer-events-none"></div>
     </div>
-               </div>         
-                      <button type="submit" class="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 py-3 rounded-lg font-medium transition-all transform hover:scale-105">
-                            Register Identity
-                        </button>
-                    </form>
-                </div>
-
-                <!-- Identity Status -->
-                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30">
-                    <h2 class="text-2xl font-bold mb-6 text-center">Identity Status</h2>
-                    <div id="identityStatus" class="space-y-4">
-                        <div class="text-center py-8">
-                            <div class="w-16 h-16 bg-purple-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                                <svg class="w-8 h-8 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
-                                </svg>
-                            </div>
-                            <p class="text-gray-300">No identity registered</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-    </div>
-
-        <!-- Credentials Tab -->
-        <div id="credentials" class="tab-content hidden">
-            <div class="grid md:grid-cols-2 gap-8">
-                <!-- Issue Credential -->
-                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30">
-                    <h2 class="text-2xl font-bold mb-6">Issue Credential</h2>
-                    <form id="issueCredentialForm" class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium mb-2">Identity ID</label>
-                            <input type="number" id="credentialIdentityId" class="w-full p-3 bg-white/10 border border-purple-500/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium mb-2">Credential Type</label>
-                            <select id="credentialType" class="w-full p-3 bg-white/10 border border-purple-500/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500">
-                                <option value="education">Education</option>
-                                <option value="employment">Employment</option>
-                                <option value="medical">Medical</option>
-                                <option value="government">Government ID</option>
-                                <option value="professional">Professional License</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium mb-2">Credential Data</label>
-                            <textarea id="credentialData" rows="4" class="w-full p-3 bg-white/10 border border-purple-500/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" placeholder="Enter credential details..."></textarea>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium mb-2">Expiration Date</label>
-                            <input type="date" id="expirationDate" class="w-full p-3 bg-white/10 border border-purple-500/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500">
-                        </div>
-                        <button type="submit" class="w-full bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 py-3 rounded-lg font-medium transition-all">
-                            Issue Credential
-                        </button>
-                    </form>
-                </div>
-
-                <!-- Credential List -->
-                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30">
-                    <h2 class="text-2xl font-bold mb-6">My Credentials</h2>
-                    <div id="credentialsList" class="space-y-4">
-                        <div class="text-center py-8">
-                            <div class="w-16 h-16 bg-blue-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                                <svg class="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                                </svg>
-                            </div>
-                            <p class="text-gray-300">No credentials found</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Reputation Tab -->
-        <div id="reputation" class="tab-content hidden">
-            <div class="grid md:grid-cols-3 gap-6">
-                <!-- Reputation Score -->
-                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30">
-                    <h3 class="text-xl font-bold mb-4">Reputation Score</h3>
-                    <div class="text-center">
-                        <div class="relative w-32 h-32 mx-auto mb-4">
-                            <svg class="w-32 h-32 transform -rotate-90" viewBox="0 0 100 100">
-                                <circle cx="50" cy="50" r="40" stroke="currentColor" stroke-width="8" fill="none" class="text-gray-600"></circle>
-                                <circle id="reputationCircle" cx="50" cy="50" r="40" stroke="currentColor" stroke-width="8" fill="none" class="text-purple-400" stroke-linecap="round" stroke-dasharray="251.2" stroke-dashoffset="125.6"></circle>
-                            </svg>
-                            <div class="absolute inset-0 flex items-center justify-center">
-                                <span id="reputationScore" class="text-2xl font-bold">0</span>
-                            </div>
-                        </div>
-                        <p class="text-gray-300">Overall Score</p>
-                    </div>
-                </div>
-
-                <!-- Verification Stats -->
-                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30">
-                    <h3 class="text-xl font-bold mb-4">Verification Stats</h3>
-                    <div class="space-y-3">
-                        <div class="flex justify-between">
-                            <span class="text-gray-300">Total Verifications:</span>
-                            <span id="totalVerifications" class="font-semibold">0</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-300">Successful:</span>
-                            <span id="successfulVerifications" class="font-semibold text-green-400">0</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-300">Failed:</span>
-                            <span id="failedVerifications" class="font-semibold text-red-400">0</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-300">Success Rate:</span>
-                            <span id="successRate" class="font-semibold">0%</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Category Scores -->
-                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30">
-                    <h3 class="text-xl font-bold mb-4">Category Scores</h3>
-                    <div id="categoryScores" class="space-y-3">
-                        <div class="text-center py-8">
-                            <p class="text-gray-300">No category data available</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- ZK Proof Tab -->
-        <div id="zkproof" class="tab-content hidden">
-            <div class="grid md:grid-cols-2 gap-8">
-                <!-- Generate ZK Proof -->
-                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30">
-                    <h2 class="text-2xl font-bold mb-6">Generate ZK Proof</h2>
-                    <form id="zkProofForm" class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium mb-2">Proof Type</label>
-                            <select id="proofType" class="w-full p-3 bg-white/10 border border-purple-500/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500">
-                                <option value="age">Age Verification</option>
-                                <option value="citizenship">Citizenship Status</option>
-                                <option value="education">Education Level</option>
-                                <option value="employment">Employment Status</option>
-                                <option value="medical">Medical Status</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium mb-2">Threshold Value</label>
-                            <input type="number" id="threshold" class="w-full p-3 bg-white/10 border border-purple-500/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" placeholder="e.g., 18 for age">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium mb-2">Secret Value</label>
-                            <input type="password" id="secretValue" class="w-full p-3 bg-white/10 border border-purple-500/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" placeholder="Your actual value">
-                        </div>
-                        <button type="submit" class="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 py-3 rounded-lg font-medium transition-all">
-                            Generate ZK Proof
-                        </button>
-                    </form>
-                </div>
-
-                <!-- Verify ZK Proof -->
-                <div class="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30">
-                    <h2 class="text-2xl font-bold mb-6">Verify ZK Proof</h2>
-                    <form id="verifyZkProofForm" class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium mb-2">Proof Data</label>
-                            <textarea id="proofData" rows="6" class="w-full p-3 bg-white/10 border border-purple-500/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" placeholder="Paste ZK proof here..."></textarea>
-                        </div>
-                        <button type="submit" class="w-full bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700 py-3 rounded-lg font-medium transition-all">
-                            Verify Proof
-                        </button>
-                    </form>
-                    
-                    <div id="verificationResult" class="mt-6 p-4 rounded-lg hidden">
-                        <div class="flex items-center space-x-2">
-                            <div id="verificationIcon" class="w-6 h-6"></div>
-                            <span id="verificationText" class="font-medium"></span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ZK Proof History -->
-            <div class="mt-8 bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-purple-500/30">
-                <h2 class="text-2xl font-bold mb-6">ZK Proof History</h2>
-                <div id="zkProofHistory" class="space-y-4">
-                    <div class="text-center py-8">
-                        <div class="w-16 h-16 bg-indigo-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <svg class="w-8 h-8 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
-                            </svg>
-                        </div>
-                        <p class="text-gray-300">No ZK proofs generated yet</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </main>
-
-    <style>
-        .tab-btn {
-            @apply px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors text-sm font-medium;
-        }
-        .tab-btn.active {
-            @apply bg-purple-600 text-white;
-        }
-        .tab-content {
-            @apply opacity-100 transition-opacity duration-300;
-        }
-        .tab-content.hidden {
-            @apply opacity-0 pointer-events-none;
-        }
-    </style>
-
-    <script>
-        // Web3 and wallet connection
-        let web3;
-        let userAccount;
-        let identityContract;
-        let credentialContract;
-        let reputationContract;
-
-        // Contract addresses (replace with actual deployed addresses)
-        const IDENTITY_CONTRACT_ADDRESS = '0x...';
-        const CREDENTIAL_CONTRACT_ADDRESS = '0x...';
-        const REPUTATION_CONTRACT_ADDRESS = '0x...';
-
-        // ZK Proof implementation
-        class ZKProofSystem {
-            constructor() {
-                this.proofs = JSON.parse(localStorage.getItem('zkProofs') || '[]');
-            }
-
-            // Simple ZK proof for age verification (proof that age >= threshold without revealing actual age)
-            generateAgeProof(actualAge, threshold) {
-                const salt = this.generateSalt();
-                const commitment = this.hash(actualAge + salt);
-                const proof = this.generateRangeProof(actualAge, threshold, salt);
-                
-                return {
-                    type: 'age',
-                    commitment,
-                    proof,
-                    threshold,
-                    timestamp: Date.now()
-                };
-            }
-
-            // Generate proof for boolean attributes (citizenship, employment, etc.)
-            generateBooleanProof(value, proofType) {
-                const salt = this.generateSalt();
-                const commitment = this.hash(value + salt);
-                const proof = this.generateBooleanCommitmentProof(value, salt);
-                
-                return {
-                    type: proofType,
-                    commitment,
-                    proof,
-                    value: value, // encrypted
-                    timestamp: Date.now()
-                };
-            }
-
-            // Generate range proof (simplified version)
-            generateRangeProof(value, threshold, salt) {
-                const isValid = value >= threshold;
-                const proofData = {
-                    challenge: this.hash(value + threshold + salt),
-                    response: this.hash(isValid + salt),
-                    bulletproof: this.generateBulletProof(value, threshold, salt)
-                };
-                
-                return {
-                    isValid,
-                    proofData,
-                    salt: this.hash(salt) // hashed salt for verification
-                };
-            }
-
-            // Generate boolean commitment proof
-            generateBooleanCommitmentProof(value, salt) {
-                const commitment = this.hash(value + salt);
-                const challenge = this.generateRandomChallenge();
-                const response = this.hash(commitment + challenge);
-                
-                return {
-                    commitment,
-                    challenge,
-                    response,
-                    salt: this.hash(salt)
-                };
-            }
-
-            // Generate bulletproof (simplified)
-            generateBulletProof(value, threshold, salt) {
-                const range = value - threshold;
-                const commitment = this.hash(range + salt);
-                const proof = this.hash(commitment + value + threshold);
-                
-                return {
-                    commitment,
-                    proof,
-                    range: range >= 0 ? 'valid' : 'invalid'
-                };
-            }
-
-            // Verify ZK proof
-            verifyProof(proofData) {
-                try {
-                    const proof = JSON.parse(proofData);
-                    
-                    switch(proof.type) {
-                        case 'age':
-                            return this.verifyAgeProof(proof);
-                        case 'citizenship':
-                        case 'employment':
-                        case 'education':
-                        case 'medical':
-                            return this.verifyBooleanProof(proof);
-                        default:
-                            return false;
-                    }
-                } catch (e) {
-                    return false;
-                }
-            }
-
-            verifyAgeProof(proof) {
-                // Verify the range proof without revealing the actual age
-                const { proofData, threshold } = proof.proof;
-                
-                // In a real implementation, this would use cryptographic verification
-                // For this demo, we simulate the verification process
-                const isValidProof = proofData.challenge && proofData.response && proofData.bulletproof;
-                const isValidRange = proofData.bulletproof.range === 'valid';
-                
-                return isValidProof && isValidRange;
-            }
-
-            verifyBooleanProof(proof) {
-                // Verify boolean commitment proof
-                const { commitment, challenge, response } = proof.proof;
-                
-                // Simulate verification
-                const expectedResponse = this.hash(commitment + challenge);
-                return response === expectedResponse;
-            }
-
-            // Utility functions
-            generateSalt() {
-                return Math.random().toString(36).substring(2, 15);
-            }
-
-            generateRandomChallenge() {
-                return Math.random().toString(36).substring(2, 15);
-            }
-
-            hash(data) {
-                return CryptoJS.SHA256(data.toString()).toString();
-            }
-
-            saveProof(proof) {
-                this.proofs.push(proof);
-                localStorage.setItem('zkProofs', JSON.stringify(this.proofs));
-            }
-
-            getProofs() {
-                return this.proofs;
-            }
-        }
-
-        const zkProofSystem = new ZKProofSystem();
-
-        // Tab switching
-        document.querySelectorAll('.tab-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const targetTab = e.target.dataset.tab;
-                
-                // Update active tab
-                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-                e.target.classList.add('active');
-                
-                // Show/hide content
-                document.querySelectorAll('.tab-content').forEach(content => {
-                    content.classList.add('hidden');
-                });
-                document.getElementById(targetTab).classList.remove('hidden');
-            });
-        });
-
-        // Connect wallet
-        document.getElementById('connectWallet').addEventListener('click', async () => {
-            if (typeof window.ethereum !== 'undefined') {
-                try {
-                    const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-                    userAccount = accounts[0];
-                    document.getElementById('walletStatus').textContent = `Connected: ${userAccount.slice(0, 6)}...${userAccount.slice(-4)}`;
-                    document.getElementById('connectWallet').textContent = 'Connected';
-                    document.getElementById('connectWallet').classList.add('bg-green-600');
-                } catch (error) {
-                    console.error('Failed to connect wallet:', error);
-                }
-            } else {
-                alert('Please install MetaMask or another Web3 wallet!');
-            }
-        });
-
-        // Register identity
-        document.getElementById('registerForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const did = document.getElementById('did').value;
-            const facialData = document.getElementById('facialData').files[0];
-            const fingerprintData = document.getElementById('fingerprintData').files[0];
-            const voiceData = document.getElementById('voiceData').files[0];
-            const irisData = document.getElementById('irisData').files[0];
-            
-            if (!did || !facialData || !fingerprintData) {
-                alert('Please fill in all required fields');
-                return;
-            }
-            
-            // Generate biometric hashes
-            const biometricData = {
-                facialHash: await hashFile(facialData),
-                fingerprintHash: await hashFile(fingerprintData),
-                voiceHash: voiceData ? await hashFile(voiceData) : '0x0',
-                irisHash: irisData ? await hashFile(irisData) : '0x0',
-                behavioralHash: '0x0',
-                dnaHash: '0x0',
-                timestamp: Math.floor(Date.now() / 1000),
-                isActive: true
-            };
-            
-            // Simulate identity registration
-            const identityId = Math.floor(Math.random() * 10000);
-            const identity = {
-                id: identityId,
-                did,
-                owner: userAccount,
-                biometrics: biometricData,
-                reputationScore: 100,
-                createdAt: Date.now(),
-                lastVerified: Date.now(),
-                isActive: true
-            };
-            
-            // Store locally for demo
-            localStorage.setItem('userIdentity', JSON.stringify(identity));
-            
-            // Update UI
-            updateIdentityStatus(identity);
-            
-            alert('Identity registered successfully!');
-        });
-
-        // Issue credential
-        document.getElementById('issueCredentialForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const identityId = document.getElementById('credentialIdentityId').value;
-            const credentialType = document.getElementById('credentialType').value;
-            const credentialData = document.getElementById('credentialData').value;
-            const expirationDate = document.getElementById('expirationDate').value;
-            
-            if (!identityId || !credentialData) {
-                alert('Please fill in all required fields');
-                return;
-            }
-            
-            const credential = {
-                id: Math.random().toString(36).substring(2, 15),
-                identityId,
-                type: credentialType,
-                data: credentialData,
-                issuer: userAccount,
-                issuedAt: Date.now(),
-                expiresAt: new Date(expirationDate).getTime(),
-                isActive: true
-            };
-            
-            // Store locally for demo
-            const credentials = JSON.parse(localStorage.getItem('credentials') || '[]');
-            credentials.push(credential);
-            localStorage.setItem('credentials', JSON.stringify(credentials));
-            
-            updateCredentialsList();
-            
-            alert('Credential issued successfully!');
-        });
-
-        // Generate ZK proof
-        document.getElementById('zkProofForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const proofType = document.getElementById('proofType').value;
-            const threshold = parseInt(document.getElementById('threshold').value);
-            const secretValue = document.getElementById('secretValue').value;
-            
-            if (!secretValue || (proofType === 'age' && !threshold)) {
-                alert('Please fill in all required fields');
-                return;
-            }
-            
-            let proof;
-            
-            if (proofType === 'age') {
-                const age = parseInt(secretValue);
-                proof = zkProofSystem.generateAgeProof(age, threshold);
-            } else {
-                const booleanValue = secretValue.toLowerCase() === 'true' || secretValue === '1';
-                proof = zkProofSystem.generateBooleanProof(booleanValue, proofType);
-            }
-            
-            zkProofSystem.saveProof(proof);
-            updateZKProofHistory();
-            
-            // Display generated proof
-            const proofJson = JSON.stringify(proof, null, 2);
-            document.getElementById('proofData').value = proofJson;
-            
-            alert('ZK Proof generated successfully!');
-        });
-
-        // Verify ZK proof
-        document.getElementById('verifyZkProofForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const proofData = document.getElementById('proofData').value;
-            
-            if (!proofData) {
-                alert('Please provide proof data');
-                return;
-            }
-            
-            const isValid = zkProofSystem.verifyProof(proofData);
-            
-            const resultDiv = document.getElementById('verificationResult');
-            const iconDiv = document.getElementById('verificationIcon');
-            const textSpan = document.getElementById('verificationText');
-            
-            if (isValid) {
-                resultDiv.className = 'mt-6 p-4 rounded-lg bg-green-500/20 border border-green-500/30';
-                iconDiv.innerHTML = '<svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>';
-                textSpan.textContent = 'Proof verified successfully!';
-                textSpan.className = 'font-medium text-green-400';
-            } else {
-                resultDiv.className = 'mt-6 p-4 rounded-lg bg-red-500/20 border border-red-500/30';
-                iconDiv.innerHTML = '<svg class="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>';
-                textSpan.textContent = 'Proof verification failed!';
-                textSpan.className = 'font-medium text-red-400';
-            }
-            
-            resultDiv.classList.remove('hidden');
-        });
-
-        // Utility functions
-        async function hashFile(file) {
-            return new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    const hash = CryptoJS.SHA256(e.target.result).toString();
-                    resolve('0x' + hash.substring(0, 64));
-                };
-                reader.readAsArrayBuffer(file);
-            });
-        }
-
-        function updateIdentityStatus(identity) {
-            const statusDiv = document.getElementById('identityStatus');
-            statusDiv.innerHTML = `
-                <div class="space-y-4">
-                    <div class="flex items-center space-x-3">
-                        <div class="w-12 h-12 bg-green-500/20 rounded-full flex items-center justify-center">
-                            <svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                            </svg>
-                        </div>
-                        <div>
-                            <h3 class="font-bold text-green-400">Identity Registered</h3>
-                            <p class="text-sm text-gray-300">ID: ${identity.id}</p>
-                        </div>
-                    </div>
-                    <div class="space-y-2">
-                        <div class="flex justify-between">
-                            <span class="text-gray-300">DID:</span>
-                            <span class="font-medium">${identity.did}</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-300">Reputation Score:</span>
-                            <span class="font-medium text-purple-400">${identity.reputationScore}</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-300">Created:</span>
-                            <span class="font-medium">${new Date(identity.createdAt).toLocaleDateString()}</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-300">Last Verified:</span>
-                            <span class="font-medium">${new Date(identity.lastVerified).toLocaleDateString()}</span>
-                        </div>
-                    </div>
-                    <div class="mt-4">
-                        <h4 class="font-bold mb-2">Biometric Data</h4>
-                        <div class="grid grid-cols-2 gap-2 text-sm">
-                            <div class="flex items-center space-x-2">
-                                <div class="w-2 h-2 bg-green-400 rounded-full"></div>
-                                <span>Facial Recognition</span>
-                            </div>
-                            <div class="flex items-center space-x-2">
-                                <div class="w-2 h-2 bg-green-400 rounded-full"></div>
-                                <span>Fingerprint</span>
-                            </div>
-                            <div class="flex items-center space-x-2">
-                                <div class="w-2 h-2 ${identity.biometrics.voiceHash !== '0x0' ? 'bg-green-400' : 'bg-gray-400'} rounded-full"></div>
-                                <span>Voice Print</span>
-                            </div>
-                            <div class="flex items-center space-x-2">
-                                <div class="w-2 h-2 ${identity.biometrics.irisHash !== '0x0' ? 'bg-green-400' : 'bg-gray-400'} rounded-full"></div>
-                                <span>Iris Scan</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-
-        function updateCredentialsList() {
-            const credentials = JSON.parse(localStorage.getItem('credentials') || '[]');
-            const listDiv = document.getElementById('credentialsList');
-            
-            if (credentials.length === 0) {
-                listDiv.innerHTML = `
-                    <div class="text-center py-8">
-                        <div class="w-16 h-16 bg-blue-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <svg class="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                            </svg>
-                        </div>
-                        <p class="text-gray-300">No credentials found</p>
-                    </div>
-                `;
-                return;
-            }
-            
-            listDiv.innerHTML = credentials.map(cred => `
-                <div class="bg-white/5 p-4 rounded-lg border border-blue-500/20">
-                    <div class="flex justify-between items-start mb-2">
-                        <h4 class="font-bold text-blue-400">${cred.type.charAt(0).toUpperCase() + cred.type.slice(1)}</h4>
-                        <span class="text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded">Active</span>
-                    </div>
-                    <p class="text-sm text-gray-300 mb-2">${cred.data}</p>
-                    <div class="flex justify-between text-xs text-gray-400">
-                        <span>Issued: ${new Date(cred.issuedAt).toLocaleDateString()}</span>
-                        <span>Expires: ${new Date(cred.expiresAt).toLocaleDateString()}</span>
-                    </div>
-                </div>
-            `).join('');
-        }
-
-        function updateReputationDisplay(reputationData) {
-            const scoreElement = document.getElementById('reputationScore');
-            const circleElement = document.getElementById('reputationCircle');
-            
-            const score = reputationData.score || 0;
-            const circumference = 2 * Math.PI * 40;
-            const progress = (score / 1000) * circumference;
-            
-            scoreElement.textContent = score;
-            circleElement.style.strokeDashoffset = circumference - progress;
-            
-            document.getElementById('totalVerifications').textContent = reputationData.totalVerifications || 0;
-            document.getElementById('successfulVerifications').textContent = reputationData.successfulVerifications || 0;
-            document.getElementById('failedVerifications').textContent = reputationData.failedVerifications || 0;
-            
-            const successRate = reputationData.totalVerifications > 0 
-                ? Math.round((reputationData.successfulVerifications / reputationData.totalVerifications) * 100)
-                : 0;
-            document.getElementById('successRate').textContent = successRate + '%';
-        }
-
-        function updateZKProofHistory() {
-            const proofs = zkProofSystem.getProofs();
-            const historyDiv = document.getElementById('zkProofHistory');
-            
-            if (proofs.length === 0) {
-                historyDiv.innerHTML = `
-                    <div class="text-center py-8">
-                        <div class="w-16 h-16 bg-indigo-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <svg class="w-8 h-8 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
-                            </svg>
-                        </div>
-                        <p class="text-gray-300">No ZK proofs generated yet</p>
-                    </div>
-                `;
-                return;
-            }
-            
-            historyDiv.innerHTML = proofs.map(proof => `
-                <div class="bg-white/5 p-4 rounded-lg border border-indigo-500/20">
-                    <div class="flex justify-between items-start mb-2">
-                        <h4 class="font-bold text-indigo-400">${proof.type.charAt(0).toUpperCase() + proof.type.slice(1)} Proof</h4>
-                        <span class="text-xs px-2 py-1 bg-indigo-500/20 text-indigo-400 rounded">Generated</span>
-                    </div>
-                    <div class="text-sm text-gray-300 mb-2">
-                        <div class="flex justify-between">
-                            <span>Commitment:</span>
-                            <span class="font-mono text-xs">${proof.commitment.substring(0, 16)}...</span>
-                        </div>
-                        ${proof.threshold ? `<div class="flex justify-between">
-                            <span>Threshold:</span>
-                            <span>${proof.threshold}</span>
-                        </div>` : ''}
-                    </div>
-                    <div class="flex justify-between text-xs text-gray-400">
-                        <span>Generated: ${new Date(proof.timestamp).toLocaleDateString()}</span>
-                        <button onclick="copyProof('${proof.commitment}')" class="text-indigo-400 hover:text-indigo-300">Copy Proof</button>
-                    </div>
-                </div>
-            `).join('');
-        }
-
-        function copyProof(commitment) {
-            navigator.clipboard.writeText(commitment);
-            alert('Proof commitment copied to clipboard!');
-        }
-
-        // Initialize the application
-        async function init() {
-            // Load saved identity
-            const savedIdentity = localStorage.getItem('userIdentity');
-            if (savedIdentity) {
-                const identity = JSON.parse(savedIdentity);
-                updateIdentityStatus(identity);
-                
-                // Load reputation data
-                const reputationData = {
-                    score: identity.reputationScore,
-                    totalVerifications: Math.floor(Math.random() * 50) + 10,
-                    successfulVerifications: Math.floor(Math.random() * 40) + 8,
-                    failedVerifications: Math.floor(Math.random() * 5) + 1
-                };
-                updateReputationDisplay(reputationData);
-            }
-            
-            // Load credentials
-            updateCredentialsList();
-            
-            // Load ZK proof history
-            updateZKProofHistory();
-        }
-
-        // Start the application
-        init();
-    </script>
-</body>
-</html>
+  )
+}
